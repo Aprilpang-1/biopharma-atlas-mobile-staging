@@ -1,0 +1,1009 @@
+/* 2026-08-02 (v2): the first attempt at this (a max-height:850px media
+   query capping the map) didn't work on April's laptop - guessing a fixed
+   viewport-height breakpoint is fragile (display scaling, browser chrome
+   height, and OS all shift what "850px" actually means in CSS pixels).
+   Replaced with a structural fix instead of a guess: the whole page is
+   now a column flexbox exactly 100vh tall. Every section EXCEPT the map
+   (header, toolbar, legend, detail panel) keeps its natural size; the map
+   is the one flexible piece and shrinks to absorb whatever's left. This
+   works by construction on any screen - there's no number to get wrong -
+   and only falls back to page scrolling in the rare case where even a
+   minimum-size map plus everything else still doesn't fit (see
+   #app's min-height below).
+
+   2026-08-06: that "shrink to fit one screen" behavior is now INTENTIONALLY
+   broken for the map specifically, per April's explicit choice (map fills
+   the full page width; if that makes it taller than one screen, the page
+   scrolls, same as any normal webpage) - see #subway-map's removed
+   max-height and #app's flex-shrink below. The single-screen-fit goal
+   above still describes why body/html are still structured as a 100vh
+   flex column at all (header/toolbar/legend never scroll away from the
+   map awkwardly), just no longer describes the map's own sizing. */
+html {
+  height: 100%;
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  /* 2026-08-06: removed the 1500px cap per April's request - on wide
+     monitors the page was centered with large empty margins on both
+     sides (the map's own width:100% rule was already stretching to fill
+     whatever it was given; the cap was the only thing holding it back).
+     Fully unbounded now, so it grows to fill any screen width. This is a
+     max, not a min - it has no effect on laptop-width screens that were
+     already under 1500px, and the existing 600px mobile breakpoint /
+     #app's horizontal-scroll fallback are untouched. */
+  margin: 0 auto;
+  padding: 2rem 1.5rem;
+  color: #222;
+  line-height: 1.5;
+  box-sizing: border-box;
+  height: 100vh;
+  height: 100dvh; /* mobile browsers: excludes the address bar's space,
+                     so this doesn't shrink the page 100vh's static value
+                     would (older browsers without dvh support just keep
+                     the 100vh line above) */
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+}
+
+header,
+#toolbar,
+.scroll-hint,
+#map-legend,
+#detail-panel {
+  flex: 0 0 auto;
+}
+
+header {
+  margin-bottom: 1rem;
+  /* 2026-08-05 (polish pass 3/3): a hairline rule under the header, plus
+     giving the title its own type treatment below, is what separates
+     "a heading floating on a page" from "an app with a defined chrome" -
+     the same visual grammar as a real product's top bar. */
+  padding-bottom: 0.85rem;
+  border-bottom: 1px solid #ececec;
+}
+
+header h1 {
+  margin: 0 0 0.25rem;
+  font-size: 1.9rem;
+  font-weight: 800;
+  letter-spacing: -0.01em;
+  color: #17202a;
+}
+
+.subtitle {
+  color: #667;
+  font-size: 0.9rem;
+  font-weight: 500;
+}
+
+#toolbar {
+  min-height: 2.2rem;
+  margin-bottom: 0.5rem;
+}
+
+#back-btn,
+#compare-btn {
+  font-size: 0.85rem;
+  font-weight: 600;
+  padding: 0.4rem 0.9rem;
+  /* 2026-08-05 (polish pass 3/3): pill shape (999px) replaces the boxy
+     6px-radius rectangle on every button on the page (see .pin-btn,
+     .layer3-buttons button, .back-inline below) - rounder chrome plus the
+     resting shadow below is what gives buttons weight even before you
+     hover them, instead of only looking "real" once the Motion-pass hover
+     state kicks in. */
+  border-radius: 999px;
+  border: 1px solid #ccc;
+  background: #fff;
+  cursor: pointer;
+  margin-right: 0.5rem;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+  /* 2026-08-05 (motion pass 2/3): same hover-lift/active-press pattern
+     applied to every clickable button on the page (see .pin-btn,
+     .layer3-buttons button, .back-inline below) - a tiny bit of physical
+     "give" is what makes buttons read as buttons rather than flat labels. */
+  transition: background 0.15s ease, transform 0.15s ease, box-shadow 0.15s ease;
+}
+
+#back-btn:hover,
+#compare-btn:hover {
+  background: #f4f4f4;
+  transform: translateY(-1px);
+  box-shadow: 0 3px 8px rgba(0, 0, 0, 0.12);
+}
+
+#back-btn:active,
+#compare-btn:active {
+  transform: translateY(0) scale(0.97);
+  box-shadow: none;
+}
+
+#compare-btn {
+  border-color: #457B9D;
+  color: #457B9D;
+  font-weight: 600;
+}
+
+.layer3-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.layer3-heading h3 {
+  margin: 0;
+}
+
+.pin-btn {
+  font-size: 0.8rem;
+  font-weight: 600;
+  padding: 0.3rem 0.7rem;
+  border-radius: 999px;
+  border: 1px solid #ccc;
+  background: #fff;
+  cursor: pointer;
+  white-space: nowrap;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+  transition: background 0.15s ease, transform 0.15s ease, box-shadow 0.15s ease;
+}
+
+.pin-btn:hover {
+  background: #f4f4f4;
+  transform: translateY(-1px);
+  box-shadow: 0 3px 8px rgba(0, 0, 0, 0.12);
+}
+
+.pin-btn:active {
+  transform: translateY(0) scale(0.97);
+  box-shadow: none;
+}
+
+.pin-btn.pinned {
+  background: #457B9D;
+  border-color: #457B9D;
+  color: #fff;
+}
+
+.compare-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  margin-bottom: 0.75rem;
+}
+
+.compare-header h3 {
+  margin: 0;
+}
+
+.compare-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1rem;
+}
+
+.compare-card {
+  background: #fff;
+  border: 1px solid #ececec;
+  border-radius: 12px;
+  padding: 1rem 1.25rem;
+  box-shadow: 0 2px 14px rgba(0, 0, 0, 0.06);
+}
+
+.compare-card h3 {
+  margin: 0 0 0.5rem;
+  font-size: 1.05rem;
+  font-weight: 700;
+  letter-spacing: -0.005em;
+}
+
+.compare-card h4 {
+  margin: 0.75rem 0 0.3rem;
+  font-size: 0.8rem;
+  color: #666;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.compare-card p {
+  margin: 0.3rem 0;
+  font-size: 0.9rem;
+  color: #444;
+}
+
+.compare-card ul {
+  margin: 0;
+  padding-left: 1.1rem;
+  font-size: 0.85rem;
+  color: #444;
+}
+
+.compare-card li {
+  margin-bottom: 0.3rem;
+}
+
+@media (max-width: 700px) {
+  .compare-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.hidden {
+  display: none !important;
+}
+
+#status {
+  color: #888;
+  font-style: italic;
+  font-size: 0.9rem;
+  padding: 2rem 0;
+}
+
+/* #app is a flex child of body (see body rule above).
+
+   2026-08-03: flex-grow changed from 1 to 0. With grow:1, #app used to
+   soak up ALL leftover vertical space in the page whenever the detail
+   panel (#detail-panel) was hidden - the map itself doesn't get any
+   taller (it's capped by its own aspect ratio via #subway-map's
+   max-height:100%), so that leftover space just became blank space
+   between the map and the legend below it. That's what made the legend
+   visibly "jump up" the moment a station was clicked and the detail
+   panel appeared and started claiming some of that space. With grow:0,
+   #app always hugs the map's natural height, so the legend sits
+   immediately after it whether or not the detail panel is showing.
+
+   2026-08-06 (round 1): flex-shrink changed from 1 to 0, and
+   #subway-map's max-height:100% removed, to let the map fill the full
+   page width even if that made it taller than one screen (page scroll).
+
+   2026-08-06 (round 2): April reconsidered - she wants the map to keep
+   its aspect ratio AND fill as much of the screen as possible with NO
+   scrolling, i.e. the original single-screen-fit goal, just now against
+   the full (unbounded) page width instead of the old 1500px cap. Back to
+   flex-grow:1 so #app fills 100% of whatever vertical space is left
+   after header/toolbar/legend/detail-panel (a definite height, not just
+   "natural size") - combined with #subway-map's width:100%/height:100%
+   below, the SVG's own default preserveAspectRatio ("xMidYMid meet")
+   scales the map up to touch whichever of width/height is the tighter
+   constraint, centered, with zero distortion and zero overflow. If the
+   screen's proportions don't exactly match the map's ~1.8:1 shape, the
+   leftover space shows as even margins on whichever side has the gap
+   (top/bottom or left/right) - unavoidable for any "contain and center"
+   layout, not a bug. */
+#app {
+  overflow-x: auto;
+  overflow-y: hidden;
+  -webkit-overflow-scrolling: touch;
+  margin: 0 -1.5rem;
+  padding: 0 1.5rem;
+  flex: 1 1 auto;
+  min-height: 220px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+#subway-map {
+  width: 100%;
+  min-width: 900px;
+  height: 100%;
+  display: block;
+  cursor: grab;
+  /* 2026-08-06: the river and its light streaks are deliberately drawn a
+     bit past the viewBox edges (see riverPathD/light-streak loop in
+     app.js) for a "flows off the frame" look. That overshoot relies on
+     the SVG clipping to its own viewBox - without an explicit overflow
+     rule here that clip isn't guaranteed, and the spill was visible at
+     the two corners the river passes closest to (top-right, bottom-left)
+     once the map got big enough for it to show. This clip is what the
+     overshoot design always assumed; it just wasn't stated explicitly. */
+  overflow: hidden;
+  /* 2026-08-05: hands touch gestures on the map entirely to our own
+     pinch-zoom/drag-pan JS (setupMapPanning's touch handlers) instead of
+     the browser's native pinch-to-zoom-the-page or two-finger scroll -
+     without this, the two systems fight each other. */
+  touch-action: none;
+}
+
+/* 2026-08-02: drag-to-pan (see setupMapPanning in app.js) - grabbing
+   cursor while an actual drag is in progress. Clickable elements (lines,
+   dots, badges) set their own cursor:pointer via more specific selectors
+   below, so hovering directly over them still shows a pointer; the grab
+   hand only shows over open map background, signaling the whole map can
+   be dragged around. */
+#subway-map.panning {
+  cursor: grabbing;
+}
+
+.scroll-hint {
+  font-size: 0.75rem;
+  color: #999;
+  margin: 0 0 0.5rem;
+  display: none;
+}
+
+/* 2026-08-05: city background (April's "make it like a real city map"
+   request, refined over several rounds - see buildCityBackground in
+   app.js for the actual skyline/river/bridge markup). Motion is slow
+   and each element runs on its own independent cycle (randomized
+   negative animation-delay set per-element in JS) so it reads as
+   ambient atmosphere rather than something competing for attention with
+   the selection-pulse/hover-lift effects from the Motion pass. */
+.city-bg {
+  pointer-events: none;
+}
+
+.city-window {
+  animation: city-twinkle 2.2s ease-in-out infinite;
+}
+
+/* 2026-08-07: soft glow behind warm/lit windows only (see city-windows
+   group in buildCityBuilding, app.js) - same core+halo layering as the
+   bridge lights just below, blurred via a cheap SVG filter rather than a
+   second flat rect so it actually reads as light bleeding outward. */
+.city-window-halo {
+  animation: city-twinkle 2.2s ease-in-out infinite;
+  opacity: 0.5;
+  filter: blur(1.5px);
+}
+
+.city-light-streak {
+  animation: city-shimmer 2s ease-in-out infinite;
+}
+
+.city-bridge-light-core {
+  animation: city-bridge-glow 1.6s ease-in-out infinite;
+}
+
+.city-bridge-light-halo {
+  animation: city-bridge-glow 1.6s ease-in-out infinite;
+  opacity: 0.35;
+}
+
+/* 2026-08-05: sped up + made more visually obvious per April's "too
+   slow and subtle" feedback - both the cycle length (4s -> 1.4s) and the
+   dash pattern itself (a short bright dash on a long gap read as barely
+   a flicker; a longer, more opaque dash reads as an actual current). */
+.city-river-flow {
+  animation: city-river-flow 1.4s linear infinite;
+}
+
+/* 2026-08-06: the 3 dots share one keyframe (bright for the first 28% of
+   their own cycle, dim the rest) but each has a different animation-delay
+   baked in at build time (base, base+2s, base+4s on the shared 6s loop -
+   see buildTrafficLight in app.js) - that's what makes them visibly take
+   turns instead of all pulsing together like the window twinkle does. */
+.city-traffic-red,
+.city-traffic-yellow,
+.city-traffic-green {
+  animation: city-traffic-cycle 6s ease-in-out infinite;
+}
+
+@keyframes city-traffic-cycle {
+  0%, 28% { opacity: 1; }
+  33%, 100% { opacity: 0.25; }
+}
+
+@keyframes city-twinkle {
+  0%, 100% { opacity: 0.25; }
+  50% { opacity: 0.95; }
+}
+
+@keyframes city-shimmer {
+  0%, 100% { opacity: 0.15; }
+  50% { opacity: 0.65; }
+}
+
+@keyframes city-bridge-glow {
+  0%, 100% { opacity: 0.45; }
+  50% { opacity: 1; }
+}
+
+@keyframes city-river-flow {
+  from { stroke-dashoffset: 0; }
+  to { stroke-dashoffset: -92; }
+}
+
+/* respects the OS-level "reduce motion" accessibility setting, same
+   spirit as disabling autoplay/parallax elsewhere - the city elements
+   still show, they just hold still instead of animating. */
+@media (prefers-reduced-motion: reduce) {
+  .city-window,
+  .city-light-streak,
+  .city-bridge-light-core,
+  .city-bridge-light-halo,
+  .city-river-flow,
+  .city-traffic-red,
+  .city-traffic-yellow,
+  .city-traffic-green {
+    animation: none;
+  }
+}
+
+.line-path {
+  fill: none;
+  stroke-width: 8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  cursor: pointer;
+  transition: stroke 0.3s ease, opacity 0.3s ease, stroke-width 0.3s ease;
+}
+
+.line-path.faded {
+  stroke: #ccc !important;
+  opacity: 0.6;
+}
+
+.line-path.line-focused {
+  stroke-width: 11;
+}
+
+.area-label {
+  font-size: 20px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: fill 0.3s ease, opacity 0.3s ease;
+}
+
+.area-label.faded {
+  fill: #bbb !important;
+  opacity: 0.7;
+}
+
+.area-badge {
+  cursor: pointer;
+  transition: opacity 0.3s ease, fill 0.3s ease, transform 0.15s ease, filter 0.15s ease;
+  /* 2026-08-05 (depth pass 1/3 - see style.css history for motion/polish
+     passes that follow): badges get the strongest shadow of the three
+     dot-family shadows below since they're the biggest, most prominent
+     markers on the map. */
+  filter: drop-shadow(2px 3px 3px rgba(0, 0, 0, 0.45));
+  /* 2026-08-05 (motion pass 2/3): scaling needs a shape-relative pivot
+     (the default SVG origin is the viewBox's 0,0, which would swing the
+     badge sideways instead of growing it in place) - fill-box + center
+     makes the badge scale around its own middle like a normal DOM element. */
+  transform-box: fill-box;
+  transform-origin: center;
+}
+
+.area-badge:hover {
+  transform: scale(1.12);
+  filter: drop-shadow(3px 5px 6px rgba(0, 0, 0, 0.55));
+}
+
+.area-badge-text {
+  font-size: 14px;
+  font-weight: 700;
+  fill: #fff;
+  pointer-events: none;
+  transition: opacity 0.3s ease;
+}
+
+.area-badge.faded {
+  fill: #ccc !important;
+  opacity: 0.7;
+}
+
+.area-badge-text.faded {
+  opacity: 0.7;
+}
+
+.legend-box {
+  pointer-events: none;
+  /* 2026-08-05: the in-map legend is the biggest single shape on the
+     page, so it gets the biggest/softest shadow - reads as a card
+     floating above the map rather than another flat map element. */
+  filter: drop-shadow(4px 6px 8px rgba(0, 0, 0, 0.35));
+}
+
+/* font-size for these three is set inline per-element in
+   renderMapLegendBox (app.js), computed from LEGEND_SCALE, so it's not
+   repeated here - keeping a static px value in both places previously
+   caused the box/badges to scale but the text to silently stay frozen. */
+.legend-box-title {
+  font-weight: 700;
+  fill: #111;
+}
+
+.legend-box-swatch {
+  cursor: pointer;
+  pointer-events: all;
+  transition: transform 0.15s ease;
+  transform-box: fill-box;
+  transform-origin: center;
+}
+
+.legend-box-swatch:hover {
+  transform: scale(1.15);
+}
+
+.legend-box-swatch-text {
+  font-weight: 700;
+  fill: #fff;
+  text-anchor: middle;
+  pointer-events: none;
+}
+
+.legend-box-name {
+  font-weight: 600;
+  fill: #333;
+  cursor: pointer;
+  pointer-events: all;
+  transition: opacity 0.15s ease;
+}
+
+.legend-box-name:hover {
+  opacity: 0.6;
+}
+
+#map-legend {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.9rem;
+  margin-top: 1.25rem;
+  padding-top: 0.9rem;
+  border-top: 1px solid #eee;
+  font-size: 0.8rem;
+  color: #555;
+}
+
+.legend-label {
+  font-weight: 600;
+  color: #333;
+}
+
+.legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  cursor: pointer;
+  border-radius: 6px;
+  padding: 0.15rem 0.35rem;
+  margin: -0.15rem -0.35rem;
+  transition: background 0.15s ease;
+}
+
+.legend-item:hover,
+.legend-item:focus-visible {
+  background: #eef1f5;
+  outline: none;
+}
+
+.legend-swatch {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  color: #fff;
+  font-size: 10px;
+  font-weight: 700;
+  border: 2px solid #111;
+}
+
+.station-dot {
+  cursor: pointer;
+  transition: opacity 0.3s ease, r 0.15s ease, filter 0.15s ease;
+  /* 2026-08-05: regular (single-line) dots get the lightest shadow of the
+     three - they're the smallest, most numerous markers, so a heavy
+     shadow on all of them would look noisy rather than "lifted". */
+  filter: drop-shadow(1px 2px 2px rgba(0, 0, 0, 0.35));
+}
+
+/* 2026-08-05 (motion pass 2/3): hover already grows the dot's radius (see
+   the two rules below) - adding a deeper shadow alongside that growth
+   sells the "lifting off the map" feel instead of just "getting bigger". */
+.station-dot:not(.interchange-dot):hover {
+  filter: drop-shadow(2px 3px 4px rgba(0, 0, 0, 0.5));
+}
+
+.interchange-dot:hover {
+  filter: drop-shadow(3px 5px 6px rgba(0, 0, 0, 0.5));
+}
+
+.tone-dot {
+  pointer-events: none;
+  transition: opacity 0.3s ease;
+}
+
+.tone-dot.hidden-station {
+  opacity: 0;
+}
+
+.pill-crossing {
+  pointer-events: none;
+  transition: opacity 0.3s ease;
+}
+
+.pill-crossing.hidden-station {
+  opacity: 0;
+}
+
+.station-dot.hidden-station {
+  opacity: 0;
+  pointer-events: none;
+}
+
+.station-dot:not(.interchange-dot):hover {
+  r: 8;
+}
+
+.interchange-dot:hover {
+  r: 13;
+}
+
+.station-dot.selected {
+  r: 10px;
+  stroke: #111;
+  stroke-width: 3;
+}
+
+.interchange-dot.selected {
+  r: 14px;
+}
+
+/* 2026-08-05 (motion pass 2/3): a one-shot expanding-and-fading ring drawn
+   over a just-clicked station (spawned in JS by spawnSelectPulse, called
+   from selectStation) - reads as "your click landed" instead of the dot
+   just silently changing style. Uses the same #111 as the .selected
+   outline above so it feels like part of the same selection moment rather
+   than a separate, disconnected effect. forwards + JS removal on
+   animationend keeps it from leaving stray elements or replaying. */
+.select-pulse {
+  fill: none;
+  stroke: #111;
+  stroke-width: 3;
+  pointer-events: none;
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: pulse-ring 0.6s ease-out forwards;
+}
+
+@keyframes pulse-ring {
+  0% {
+    transform: scale(1);
+    opacity: 0.7;
+  }
+  100% {
+    transform: scale(2.4);
+    opacity: 0;
+  }
+}
+
+.interchange-dot {
+  fill: #fff;
+  stroke: #111;
+  stroke-width: 4;
+  /* Overrides .station-dot's lighter shadow above (same specificity,
+     later in the file wins) - the multi-line pill markers are bigger
+     and more visually important, so they get a slightly stronger one,
+     matching .area-badge's weight. */
+  filter: drop-shadow(2px 3px 3px rgba(0, 0, 0, 0.4));
+}
+
+.station-label {
+  font-size: 16px;
+  font-weight: 600;
+  fill: #222;
+  pointer-events: none;
+  transition: opacity 0.3s ease, font-size 0.15s ease;
+}
+
+.station-label.line-focused {
+  font-size: 19px;
+}
+
+.station-label.selected {
+  font-size: 21px;
+  fill: #111;
+}
+
+.station-label.hidden-station {
+  opacity: 0;
+}
+
+.station-sublabel {
+  font-size: 10px;
+  font-style: italic;
+  fill: #888;
+  pointer-events: none;
+  transition: opacity 0.3s ease;
+}
+
+.station-sublabel.hidden-station {
+  opacity: 0;
+}
+
+#detail-panel {
+  margin-top: 1.5rem;
+  border: 1px solid #ececec;
+  border-radius: 12px;
+  padding: 1rem 1.25rem;
+  background: #fafafa;
+  /* 2026-08-05 (polish pass 3/3): a soft ambient shadow reads as "this
+     panel is a raised card" the same way the map's own drop-shadows
+     (Depth pass) do - lighter border alongside it since the shadow now
+     does the work of separating the panel from the page background. */
+  box-shadow: 0 2px 14px rgba(0, 0, 0, 0.06);
+}
+
+#detail-panel h3 {
+  margin: 0 0 0.4rem;
+  font-weight: 700;
+  letter-spacing: -0.005em;
+}
+
+#detail-panel p {
+  margin: 0.3rem 0;
+  font-size: 0.9rem;
+  color: #444;
+}
+
+#detail-panel .placeholder-note {
+  font-size: 0.8rem;
+  color: #999;
+  font-style: italic;
+  margin-top: 0.6rem;
+}
+
+.breadcrumb {
+  font-size: 0.8rem;
+  color: #888;
+  margin-bottom: 0.6rem;
+}
+
+.crumb {
+  cursor: pointer;
+}
+
+.crumb:hover {
+  text-decoration: underline;
+}
+
+.crumb.current {
+  color: #222;
+  font-weight: 600;
+  cursor: default;
+}
+
+.crumb.current:hover {
+  text-decoration: none;
+}
+
+.crumb-sep {
+  margin: 0 0.35rem;
+}
+
+.schematic-caption {
+  font-size: 0.8rem;
+  color: #888;
+  font-style: italic;
+}
+
+.layer3-buttons {
+  display: flex;
+  gap: 0.6rem;
+  margin-top: 1rem;
+}
+
+.layer3-buttons button {
+  flex: 1;
+  font-size: 0.9rem;
+  font-weight: 600;
+  padding: 0.6rem 0.9rem;
+  border-radius: 999px;
+  border: 1px solid #ccc;
+  background: #fff;
+  cursor: pointer;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+  transition: background 0.15s ease, transform 0.15s ease, box-shadow 0.15s ease;
+}
+
+.layer3-buttons button:hover {
+  background: #f0f0f0;
+  transform: translateY(-1px);
+  box-shadow: 0 3px 8px rgba(0, 0, 0, 0.12);
+}
+
+.layer3-buttons button:active {
+  transform: translateY(0) scale(0.97);
+  box-shadow: none;
+}
+
+.drug-list {
+  list-style: none;
+  padding: 0;
+  margin: 0.5rem 0;
+}
+
+.drug-list li {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  padding: 0.5rem 0;
+  border-bottom: 1px solid #e5e5e5;
+  font-size: 0.9rem;
+}
+
+.drug-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.drug-name {
+  font-weight: 600;
+}
+
+/* 2026-08-02: shown next to a drug's name only on shared (multi-line)
+   stations, so each example drug's line/therapeutic area reads at a
+   glance - color matches that area's own badge/legend color elsewhere on
+   the map for visual consistency. */
+.drug-area-tag {
+  font-size: 0.7rem;
+  font-weight: 700;
+  color: #fff;
+  padding: 0.15rem 0.55rem;
+  border-radius: 999px;
+  white-space: nowrap;
+}
+
+.drug-meta {
+  color: #888;
+}
+
+.proscons-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1rem;
+  margin: 0.75rem 0;
+}
+
+.proscons-col h4 {
+  margin: 0 0 0.4rem;
+  /* 2026-08-05 (polish pass 3/3): shrunk + treated as a small-caps-style
+     label (uppercase, letter-spaced) instead of a same-weight-as-body
+     heading - matches the .drug-area-tag pill treatment already used
+     elsewhere, so "PROS"/"CONS" reads as a section label, not a sentence. */
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.pros-col h4 {
+  color: #1a7a4c;
+}
+
+.cons-col h4 {
+  color: #b3401f;
+}
+
+.proscons-col ul {
+  margin: 0;
+  padding-left: 1.1rem;
+  font-size: 0.85rem;
+  color: #444;
+}
+
+.proscons-col li {
+  margin-bottom: 0.35rem;
+}
+
+.verdict {
+  font-size: 0.9rem;
+  background: #eef1f5;
+  border-radius: 8px;
+  padding: 0.6rem 0.8rem;
+  /* 2026-08-05 (polish pass 3/3): a left accent bar turns this into a
+     callout instead of a plain tinted paragraph - it's the one sentence
+     in the panel meant to be read first, so it should look like it. */
+  border-left: 4px solid #457B9D;
+}
+
+.back-inline {
+  margin-top: 0.5rem;
+  font-size: 0.85rem;
+  font-weight: 600;
+  padding: 0.4rem 0.8rem;
+  border-radius: 999px;
+  border: 1px solid #ccc;
+  background: #fff;
+  cursor: pointer;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+  transition: background 0.15s ease, transform 0.15s ease, box-shadow 0.15s ease;
+}
+
+.back-inline:hover {
+  background: #f4f4f4;
+  transform: translateY(-1px);
+  box-shadow: 0 3px 8px rgba(0, 0, 0, 0.12);
+}
+
+.back-inline:active {
+  transform: translateY(0) scale(0.97);
+  box-shadow: none;
+}
+
+@media (max-width: 600px) {
+  .proscons-grid {
+    grid-template-columns: 1fr;
+  }
+
+  body {
+    padding: 1.25rem 1rem;
+  }
+
+  /* 2026-08-05: originally hidden here on phone widths (~150 extra
+     building/window/light elements judged too cluttered for a small
+     screen). 2026-08-07: April asked to turn it back on and try it - see
+     the .city-bg rule further up (no display:none override anymore). */
+
+  header h1 {
+    font-size: 1.5rem;
+  }
+
+  .subtitle {
+    font-size: 0.85rem;
+  }
+
+  .scroll-hint {
+    display: block;
+  }
+
+  /* 2026-08-05: the map's touch gestures now pan/zoom the SVG's own
+     viewBox (setupMapPanning) instead of relying on the browser's native
+     horizontal scroll of an oversized element - and touch-action:none
+     on #subway-map (see above) turns that native scroll off entirely.
+     Keeping min-width:900px here on mobile would leave part of the map
+     permanently off-screen with no way to reach it, so it's dropped to
+     0 - the SVG now always exactly fills the phone's screen width, and
+     pinch/pan is the only way to see the rest, same as a real map app. */
+  #subway-map {
+    min-width: 0;
+  }
+
+  .station-dot {
+    r: 10px;
+  }
+
+  .station-dot.interchange-dot {
+    r: 13px;
+  }
+
+  .layer3-buttons {
+    flex-direction: column;
+  }
+
+  .layer3-buttons button {
+    padding: 0.75rem 0.8rem;
+    font-size: 1rem;
+  }
+
+  #back-btn,
+  .back-inline {
+    padding: 0.6rem 0.9rem;
+    font-size: 0.9rem;
+  }
+
+  .breadcrumb {
+    line-height: 1.6;
+  }
+
+  .drug-list li {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.15rem;
+  }
+}
