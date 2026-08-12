@@ -6,7 +6,7 @@ const SVG_NS = "http://www.w3.org/2000/svg";
 
 // Hand-tuned layout - station positions are presentational, not content,
 // so they live here rather than in content.json.
-const LAYOUT = {
+const DESKTOP_LAYOUT = {
   // widened on the right to give Vaccines/Infectious Disease its own open
   // column (x:1350-1550) - it's the one fully green-field area with no
   // interchanges into the existing network, so it doesn't need to route
@@ -505,6 +505,231 @@ const LAYOUT = {
   // every color instead of only the first two
 };
 
+// Mobile portrait layout (April's "make it vertical for phones" request,
+// 2026-08-08). Same topology/interchanges as the desktop LAYOUT above, but
+// re-routed top-to-bottom instead of left-to-right, with the same
+// strict-right-angle routing style (see roundedPathD) - every line built
+// and verified (during the sketch phase) to be axis-aligned with zero
+// segment overlap between different lines, using small parallel offsets
+// at shared hub-to-hub corridors, same convention as the desktop pill
+// tone-dots. Station label positions here use the same above/below
+// default as desktop for now - fine-tuning offsets happens in the QA pass
+// (still to come), same as the desktop layout got after its own first cut.
+// 2026-08-10: full "vertical-first" redesign (April's "9 out of 10 lines
+// vertical" + "mimic Shanghai more, fewer turns, stagger AAV/ASO/CRISPR"
+// requests). Replaces the old left-to-right-mirrored mobile routing above
+// with a genuinely column-based layout: each area gets its own dedicated
+// x-column reused across non-overlapping y-ranges, connections between
+// columns take a single clean 45-degree diagonal ("kink") instead of a
+// multi-segment jog, and AAV/ASO/CRISPR now sit at three different
+// heights so Rare Disease flows straight through all three in one pass
+// instead of spurring out and back. Generated from the approved sketch
+// (build_vertical2.py) plus April's hand-placed label positions from her
+// PPTX edit pass (diffed against the pptx's own default "centered above
+// the dot" placement, then reconciled onto this file's real label-anchor
+// formula below so the same relative nudge she made carries over exactly).
+// Interchange pills are no longer a fixed-width vertical dot-stack - see
+// pillGeometry below and the pill-rendering code in buildMap for the new
+// horizontal dot-stacking this layout relies on.
+const MOBILE_LAYOUT = {
+  viewBox: "185.8 -295 673.4 1979",
+  linePaths: {
+    "oncology": "650,-235 650,-180 650,-100 650,-20 650,60 570,140 510,140 510,410 520,420 640,420",
+    "immunology": "350,-155 350,-100 350,-20 350,60 430,140 490,140 490,390 460,420 340,420",
+    "infectious-disease": "485,365 540,420 600,480 750,480 750,560",
+    "cardiovascular": "420,165 420,220 420,300 420,360 480,420 480,670 490,680 490,890 480,900",
+    "metabolic": "635,555 580,500 500,420 500,670 510,680 510,690 580,760 580,840 520,900 620,900",
+    "respiratory": "360,365 360,420 360,490 350,500 350,580 350,660",
+    "rare-disease": "500,845 500,900 500,1040 500,1170 490,1180 490,1230 420,1300 540,1420 600,1420",
+    "neuro": "350,925 350,980 350,1080 450,1180 470,1180 470,1230 400,1300",
+    "hematology": "660,365 660,420 660,1030 510,1180 510,1310 620,1420 620,1550 610,1560",
+    "ophthalmology": "420,925 420,980 420,1080 520,1180 530,1180 530,1250 580,1300",
+  },
+  areaLabelPos: {
+    "oncology": { x: 650, y: -235 },
+    "immunology": { x: 350, y: -155 },
+    "infectious-disease": { x: 485, y: 365 },
+    "cardiovascular": { x: 420, y: 165 },
+    "metabolic": { x: 635, y: 555 },
+    "respiratory": { x: 360, y: 365 },
+    "rare-disease": { x: 500, y: 845 },
+    "neuro": { x: 350, y: 925 },
+    "hematology": { x: 660, y: 365 },
+    "ophthalmology": { x: 420, y: 925 },
+  },
+  stationPos: {
+    "adc": { x: 500, y: 140 },
+    "targeted-mab": { x: 500, y: 420 },
+    "bispecific-ab": { x: 650, y: 420 },
+    "anti-cytokine-mab": { x: 350, y: 420 },
+    "sglt2-inhibitor": { x: 500, y: 680 },
+    "rnai-therapeutics": { x: 500, y: 900 },
+    "gene-therapy-aav": { x: 500, y: 1180 },
+    "aso": { x: 410, y: 1300 },
+    "crispr-gene-editing": { x: 610, y: 1420 },
+    "checkpoint-inhibitor": { x: 650, y: -180 },
+    "radioligand-therapy": { x: 650, y: -100 },
+    "cell-therapy": { x: 650, y: -20 },
+    "small-molecule": { x: 650, y: 60 },
+    "integrin-inhibitor": { x: 350, y: -100 },
+    "jak-inhibitor": { x: 350, y: -20 },
+    "fcrn-inhibitor": { x: 350, y: 60 },
+    "arni-heart-failure": { x: 420, y: 220 },
+    "anticoagulant-doac": { x: 420, y: 300 },
+    "mrna-vaccine": { x: 750, y: 480 },
+    "antiviral-daa": { x: 750, y: 560 },
+    "glp1-agonist": { x: 580, y: 500 },
+    "thr-beta-agonist": { x: 580, y: 760 },
+    "insulin-analog": { x: 620, y: 900 },
+    "anti-tslp-biologic": { x: 350, y: 500 },
+    "antifibrotic-ipf": { x: 350, y: 580 },
+    "cftr-modulator": { x: 350, y: 660 },
+    "enzyme-replacement-therapy": { x: 500, y: 1040 },
+    "anti-amyloid-mab": { x: 350, y: 980 },
+    "anti-cgrp-therapy": { x: 350, y: 1080 },
+    "complement-inhibitor-pnh": { x: 610, y: 1560 },
+    "complement-inhibitor-ga": { x: 420, y: 980 },
+    "anti-vegf-therapy": { x: 420, y: 1080 },
+    "dry-eye-immunomodulator": { x: 580, y: 1300 },
+  },
+  // 2026-08-10 (task #171, per April's "make sure no station label text is
+  // touching or overlapping any line"): every value below (labelBelow,
+  // labelOffsetX, labelOffsetY) was found by an automated solver, not by
+  // eye. The solver measures each label's REAL rendered width (Helvetica
+  // Bold metrics via string-pixel-width, matching this map's actual
+  // font/weight/size) and checks it against every line segment on the map
+  // (excluding only the short stretch of a station's OWN line right next
+  // to its OWN marker, which is expected to sit close). For every station
+  // where the previous position still touched a line, it grid-searched
+  // offsetX/offsetY/labelBelow for the nearest configuration with zero
+  // line overlaps, preferring to keep April's original left/right side
+  // where a large-enough nudge on that same side existed. Re-verified
+  // after applying: 0 label-vs-line overlaps and 0 label-vs-label overlaps
+  // across all 33 stations (see solve_labels.js / check_collisions.js).
+  labelBelow: [
+    "anti-tslp-biologic", "antifibrotic-ipf", "antiviral-daa", "aso", "cell-therapy", "cftr-modulator", "checkpoint-inhibitor", "complement-inhibitor-pnh", "crispr-gene-editing", "dry-eye-immunomodulator", "enzyme-replacement-therapy", "fcrn-inhibitor", "gene-therapy-aav", "glp1-agonist", "integrin-inhibitor", "jak-inhibitor", "radioligand-therapy", "small-molecule", "targeted-mab"
+  ],
+  labelOffsetX: {
+    "targeted-mab": -75,
+    "bispecific-ab": -35,
+    "anti-cytokine-mab": -15,
+    "sglt2-inhibitor": 50,
+    "rnai-therapeutics": -62.4,
+    "gene-therapy-aav": 85,
+    "aso": -40,
+    "crispr-gene-editing": 65,
+    "checkpoint-inhibitor": -80,
+    "radioligand-therapy": 50,
+    "cell-therapy": -50,
+    "small-molecule": 35.4,
+    "integrin-inhibitor": 34.8,
+    "jak-inhibitor": 55,
+    "fcrn-inhibitor": 80,
+    "arni-heart-failure": -60,
+    "anticoagulant-doac": -55,
+    "antiviral-daa": -35,
+    "glp1-agonist": 5,
+    "thr-beta-agonist": 20,
+    "insulin-analog": 125,
+    "anti-tslp-biologic": -45,
+    "antifibrotic-ipf": 45,
+    "cftr-modulator": 35,
+    "enzyme-replacement-therapy": 145,
+    "anti-amyloid-mab": -55,
+    "anti-cgrp-therapy": -55,
+    "complement-inhibitor-pnh": -42.8,
+    "complement-inhibitor-ga": -25,
+    "anti-vegf-therapy": 125,
+    "dry-eye-immunomodulator": 41.2,
+  },
+  labelOffsetY: {
+    "adc": -10,
+    "anti-cytokine-mab": -20,
+    "aso": 40,
+    "glp1-agonist": 50,
+    "thr-beta-agonist": -30,
+    "cftr-modulator": 10,
+    "enzyme-replacement-therapy": 80,
+    "complement-inhibitor-ga": -50,
+  },
+  // Per-interchange pill geometry for the new HORIZONTAL dot-stacking
+  // (replaces the old fixed-20px-wide vertical stack): pillW/pillH size
+  // the capsule marker, dotX gives each sharing line's own x-offset from
+  // the station center (keyed by area id, not array index, so it's
+  // immune to content.json's mod.areas ordering) - chosen so each dot
+  // sits on the side its own line actually approaches from, per April's
+  // "line must cross its own matching-color dot" principle.
+  pillGeometry: {
+    "adc": { pillW: 46, pillH: 26, dotX: { "immunology": -10, "oncology": 10 } },
+    "targeted-mab": { pillW: 106, pillH: 26, dotX: { "immunology": -40, "cardiovascular": -20, "metabolic": 0, "oncology": 20, "infectious-disease": 40 } },
+    "bispecific-ab": { pillW: 46, pillH: 26, dotX: { "oncology": -10, "hematology": 10 } },
+    "anti-cytokine-mab": { pillW: 46, pillH: 26, dotX: { "immunology": -10, "respiratory": 10 } },
+    "sglt2-inhibitor": { pillW: 46, pillH: 26, dotX: { "cardiovascular": -10, "metabolic": 10 } },
+    "rnai-therapeutics": { pillW: 66, pillH: 26, dotX: { "cardiovascular": -20, "rare-disease": 0, "metabolic": 20 } },
+    "gene-therapy-aav": { pillW: 86, pillH: 26, dotX: { "neuro": -30, "rare-disease": -10, "hematology": 10, "ophthalmology": 30 } },
+    "aso": { pillW: 46, pillH: 26, dotX: { "neuro": -10, "rare-disease": 10 } },
+    "crispr-gene-editing": { pillW: 46, pillH: 26, dotX: { "rare-disease": -10, "hematology": 10 } },
+  },
+  // Keyed by area id (not toneIndex) for the same order-independence
+  // reason as pillGeometry.dotX above - each dot's dashed "hidden
+  // segment" guide now draws vertically (top/bottom, to the dot's own x)
+  // or horizontally (left/right, at the shared row y) depending on which
+  // edge of the pill that line's real path geometrically exits through.
+  pillCrossings: {
+    "adc": {
+      "oncology": ["bottom", "right"],
+      "immunology": ["bottom", "left"],
+    },
+    "targeted-mab": {
+      "oncology": ["right", "top"],
+      "immunology": ["left", "top"],
+      "infectious-disease": ["bottom"],
+      "cardiovascular": ["bottom", "top"],
+      "metabolic": ["bottom"],
+    },
+    "bispecific-ab": {
+      "oncology": ["left"],
+      "hematology": ["bottom"],
+    },
+    "anti-cytokine-mab": {
+      "immunology": ["right"],
+      "respiratory": ["bottom"],
+    },
+    "sglt2-inhibitor": {
+      "cardiovascular": ["bottom", "top"],
+      "metabolic": ["bottom", "top"],
+    },
+    "rnai-therapeutics": {
+      "cardiovascular": ["top"],
+      "metabolic": ["right", "top"],
+      "rare-disease": ["bottom"],
+    },
+    "gene-therapy-aav": {
+      "rare-disease": ["bottom", "top"],
+      "neuro": ["bottom", "left"],
+      "hematology": ["bottom", "top"],
+      "ophthalmology": ["bottom", "left"],
+    },
+    "aso": {
+      "rare-disease": ["bottom", "top"],
+      "neuro": ["top"],
+    },
+    "crispr-gene-editing": {
+      "rare-disease": ["left"],
+      "hematology": ["bottom", "top"],
+    },
+  },
+};
+
+// Picked once at load time (not live-reactive on resize/rotate - a full
+// relayout on every resize event would mean rebuilding the whole SVG
+// mid-interaction, which is its own separate piece of work) based on the
+// same 600px breakpoint the rest of the mobile CSS already uses (see
+// style.css's @media (max-width:600px)).
+const LAYOUT = (typeof window !== "undefined" && window.innerWidth <= 600)
+  ? MOBILE_LAYOUT
+  : DESKTOP_LAYOUT;
+
 var state = {
   data: null,
   selectedArea: null,
@@ -600,17 +825,19 @@ function closeCompare() {
 
 function renderComparePanel() {
   var panel = document.getElementById("detail-panel");
+  var body = document.getElementById("detail-panel-body");
   var mods = state.pinned.map(function (id) {
     return state.data.modalities.filter(function (m) { return m.id === id; })[0];
   });
   panel.classList.remove("hidden");
-  panel.innerHTML =
+  syncSheetBackdrop(true);
+  body.innerHTML =
     "<div class=\"compare-header\">" +
     "<h3>Comparing modalities</h3>" +
     "<button class=\"back-inline\" data-action=\"close-compare\">&times; Close comparison</button>" +
     "</div>" +
     "<div class=\"compare-grid\">" + mods.map(compareCardHtml).join("") + "</div>";
-  var closeBtn = panel.querySelector('[data-action="close-compare"]');
+  var closeBtn = body.querySelector('[data-action="close-compare"]');
   if (closeBtn) closeBtn.addEventListener("click", closeCompare);
 }
 
@@ -792,12 +1019,32 @@ function roundedPathD(points, radius, stationPoints) {
 
 // Every station's {x,y} as a "x,y" lookup set, used by roundedPathD to
 // know which path vertices are real stations vs. pure routing bends.
+//
+// 2026-08-10: interchange pills can now stack their dots HORIZONTALLY at
+// arbitrary per-line x-offsets (see LAYOUT.pillGeometry / buildMap) rather
+// than always sitting at the pill's own center x. A line's real path
+// touches its OWN dot's exact (offset) position, not the station center -
+// without also registering those offset points here, roundedPathD would
+// treat that touch as an ordinary routing bend and apply the full corner
+// radius there, reopening the exact "rounded corner falls short of the
+// dot" gap bug fixed earlier (see the SGLT2 orange-line history above).
 function buildStationPointSet() {
   var set = {};
   Object.keys(LAYOUT.stationPos).forEach(function (id) {
     var p = LAYOUT.stationPos[id];
     set[p.x + "," + p.y] = true;
   });
+  if (LAYOUT.pillGeometry) {
+    Object.keys(LAYOUT.pillGeometry).forEach(function (id) {
+      var pos = LAYOUT.stationPos[id];
+      var geo = LAYOUT.pillGeometry[id];
+      if (!pos || !geo) return;
+      Object.keys(geo.dotX).forEach(function (area) {
+        var dx = pos.x + geo.dotX[area];
+        set[dx + "," + pos.y] = true;
+      });
+    });
+  }
   return set;
 }
 
@@ -913,6 +1160,14 @@ function buildCityBackground(svg, vbParts) {
   var VB = { x0: parseFloat(vbParts[0]), y0: parseFloat(vbParts[1]), w: parseFloat(vbParts[2]), h: parseFloat(vbParts[3]) };
   var x1 = VB.x0 + VB.w, y1 = VB.y0 + VB.h;
   var rnd = seededRandom(23);
+  // 2026-08-08: portrait (mobile) canvas is a very different aspect ratio
+  // from the original landscape desktop canvas - several elements below
+  // that used to be tuned as fixed absolute pixel positions (safe only on
+  // desktop's specific ~2230x1225 canvas) now branch on this flag so they
+  // get their own portrait-appropriate placement instead of drifting
+  // off-canvas or bunching up. Anything already expressed as a VB.w/VB.h
+  // fraction needed no change and applies to both automatically.
+  var isPortrait = VB.h > VB.w;
 
   var defs = svgEl("defs", {});
 
@@ -965,14 +1220,24 @@ function buildCityBackground(svg, vbParts) {
   addCityRoad(VB.x0 - 40, roadY, x1 + 40, roadY);
   addCityRoad(roadX, VB.y0 - 40, roadX, y1 + 40);
   // 2026-08-06 (round 5): third road, at the vertical line April marked
-  // crossing the whole map (x:~1250 - just left of the legend box, which
-  // starts at x:1280, so it doesn't run under it).
-  addCityRoad(1250, VB.y0 - 40, 1250, y1 + 40);
+  // crossing the whole map, just left of the legend box so it doesn't run
+  // under it. 2026-08-08: made relative to MAP_LEGEND_BOX's own (now
+  // viewBox-responsive) position instead of the hardcoded x:1250 - on
+  // desktop this still resolves to exactly 1250 (no regression); on the
+  // narrower mobile canvas it correctly sits just left of the smaller,
+  // repositioned legend box instead of running off-canvas.
+  var thirdRoadX = MAP_LEGEND_BOX.x - 30;
+  addCityRoad(thirdRoadX, VB.y0 - 40, thirdRoadX, y1 + 40);
 
   // buildings scattered full-bleed across the whole canvas (not just the
   // edges) at low density/opacity, so the skyline sits behind every line
-  // rather than just framing the map
-  var cols = 16, rows = 9, density = 0.24;
+  // rather than just framing the map. 2026-08-08: row count now derives
+  // from the canvas aspect ratio (cols stays 16) so building cells stay
+  // roughly the same shape on any viewBox - on desktop's ~2230x1225 this
+  // still resolves to the original 9 rows exactly; on mobile's taller
+  // 1260x1660 portrait canvas it correctly scales up to ~21 rows instead
+  // of stretching 9 rows' worth of buildings into much taller cells.
+  var cols = 16, rows = Math.round(cols * (VB.h / VB.w)), density = 0.24;
   var cw = VB.w / cols, ch = VB.h / rows;
   var roofs = ["flat", "flat", "antenna", "setback", "pointed", "flat"];
   for (var r = 0; r < rows; r++) {
@@ -1049,7 +1314,21 @@ function buildCityBackground(svg, vbParts) {
       }
     }
   }
-  addCityPark(1775, 280, 175, 180, 30);
+  // 2026-08-08: desktop's park spot (1775,280) was hand-picked for that
+  // canvas's specific open corner (clear of ID's rightmost run, the legend,
+  // and the nearby bridge) and sits entirely off-canvas on the much
+  // narrower mobile viewBox. Mobile gets its own spot, found the same way
+  // desktop's was (a script-based clearance sweep against every real line
+  // segment, station and the legend box) - (110,910), on the left edge
+  // roughly a third of the way down, came back with 250+ units of
+  // clearance in every direction, the most open pocket on the portrait
+  // canvas. Sized down to fit (rx/ry ~half desktop's) and fewer trees to
+  // match.
+  if (isPortrait) {
+    addCityPark(110, 910, 95, 100, 18);
+  } else {
+    addCityPark(1775, 280, 175, 180, 30);
+  }
 
   // 2026-08-06: traffic lights, per April's ask. Checked every real line
   // segment, station, badge and the legend box against candidate points
@@ -1087,20 +1366,41 @@ function buildCityBackground(svg, vbParts) {
   // Metabolic line (basically touching it). (40, 560) - about 60 units
   // right/below her mark, same open pocket - is the closest point where
   // the entire fixture clears every real line by 56+ units.
-  g.appendChild(buildTrafficLight(1700, roadY));
-  g.appendChild(buildTrafficLight(40, 560));
+  // 2026-08-08: desktop's two spots ((1700,roadY) and (40,560)) were swept
+  // against desktop's specific line geometry, and (1700,...) is off-canvas
+  // on the 1260-wide mobile viewBox entirely. Mobile gets its own
+  // clearance-swept pair: (1200,220) and (1200,1100), both on the open
+  // right-hand margin of the portrait canvas, 280 units clear of every
+  // real line/station/label/legend-box in every direction, spread top-
+  // third and bottom-third so they don't read as a matched set.
+  if (isPortrait) {
+    g.appendChild(buildTrafficLight(1200, 220));
+    g.appendChild(buildTrafficLight(1200, 1100));
+  } else {
+    g.appendChild(buildTrafficLight(1700, roadY));
+    g.appendChild(buildTrafficLight(40, 560));
+  }
 
   // river sweeps diagonally through the whole canvas, under the lines -
   // routed through the layout's more open corners rather than through
   // the densest label clusters
-  function riverPathD(amp) {
-    var pts = [
-      [VB.x0 - 40, y1 - 120],
-      [VB.x0 + VB.w * 0.28, y1 - 260],
-      [VB.x0 + VB.w * 0.55, y1 - 520],
-      [VB.x0 + VB.w * 0.8, y1 - 760],
-      [x1 + 40, y1 - 980]
-    ];
+  // 2026-08-08: the 5 waypoints used to be fixed pixel offsets from the
+  // bottom edge (y1-120, y1-260, ... y1-980), tuned so the river covers
+  // about 80% of desktop's own ~1225-tall canvas. On mobile's much taller
+  // 1660-tall portrait canvas those same absolute offsets only reached
+  // ~59% of the way up, leaving the whole top third of the map with no
+  // river at all. Offsets are now VB.h fractions instead (120/260/520/
+  // 760/980 divided by desktop's original 1225 height) - on desktop this
+  // resolves to the exact same pixel values as before (no regression); on
+  // mobile it now spans the same ~80% of the full portrait height.
+  var riverPts = [
+    [VB.x0 - 40, y1 - VB.h * (120 / 1225)],
+    [VB.x0 + VB.w * 0.28, y1 - VB.h * (260 / 1225)],
+    [VB.x0 + VB.w * 0.55, y1 - VB.h * (520 / 1225)],
+    [VB.x0 + VB.w * 0.8, y1 - VB.h * (760 / 1225)],
+    [x1 + 40, y1 - VB.h * (980 / 1225)]
+  ];
+  function riverPathD(amp, pts) {
     var d = "M " + pts[0][0] + "," + pts[0][1];
     for (var i = 1; i < pts.length; i++) {
       var px = pts[i - 1][0], py = pts[i - 1][1];
@@ -1110,7 +1410,7 @@ function buildCityBackground(svg, vbParts) {
     }
     return d;
   }
-  var riverD = riverPathD(75);
+  var riverD = riverPathD(75, riverPts);
   g.appendChild(svgEl("path", {
     d: riverD, stroke: "url(#city-river-grad)", "stroke-width": 82,
     fill: "none", opacity: 0.5, "stroke-linecap": "round"
@@ -1223,9 +1523,22 @@ function buildCityBackground(svg, vbParts) {
     }
   }
 
-  addBridge(30, 804, 60, 120);
-  addSuspensionBridge(865, 405, 60, 120);
-  addBridge(1604, 40, 60, 120);
+  // 2026-08-08: desktop's 3 fixed points were tuned to sit on desktop's own
+  // river path and are meaningless on mobile's differently-shaped river.
+  // Mobile instead uses 3 of the river's own waypoints directly (they're
+  // guaranteed to sit exactly ON the curve, since each Q segment ends
+  // precisely at its target point) - the 2nd, 3rd and 4th of the 5 river
+  // points, skipping the 1st/5th since those sit just off-canvas by design
+  // (VB.x0-40 / x1+40, for a full-bleed edge-to-edge look).
+  if (isPortrait) {
+    addBridge(riverPts[1][0], riverPts[1][1], 60, 120);
+    addSuspensionBridge(riverPts[2][0], riverPts[2][1], 60, 120);
+    addBridge(riverPts[3][0], riverPts[3][1], 60, 120);
+  } else {
+    addBridge(30, 804, 60, 120);
+    addSuspensionBridge(865, 405, 60, 120);
+    addBridge(1604, 40, 60, 120);
+  }
 
   svg.appendChild(g);
 }
@@ -1350,7 +1663,17 @@ function buildMap(app) {
     var shareCount = mod.areas.length;
     var multiTone = shareCount > 1;
     var dotSpacing = 12;
-    var pillW = 20, pillH = 24 + (shareCount - 1) * dotSpacing;
+    // 2026-08-10: the mobile "vertical-first" redesign stacks each
+    // interchange's dots HORIZONTALLY (left-to-right, at the x its own
+    // line actually approaches from) instead of the old fixed-20px-wide
+    // vertical stack - a wide pill can hold any number of dots at a
+    // single row height instead of growing taller. LAYOUT.pillGeometry
+    // carries this per-station width/height/dot-offset data; it's only
+    // present on MOBILE_LAYOUT, so DESKTOP_LAYOUT (and any other layout
+    // without it) transparently keeps the original vertical-stack sizing.
+    var pillGeo = LAYOUT.pillGeometry && LAYOUT.pillGeometry[mod.id];
+    var pillW = pillGeo ? pillGeo.pillW : 20;
+    var pillH = pillGeo ? pillGeo.pillH : 24 + (shareCount - 1) * dotSpacing;
     var dot;
     if (multiTone) {
       dot = svgEl("rect", {
@@ -1383,15 +1706,25 @@ function buildMap(app) {
     });
     mapContent.appendChild(dot);
 
-    // One small color dot per sharing line, stacked vertically in areas
-    // order, marking exactly which lines meet at this station - like the
-    // NYC map's interchange color indicators.
+    // One small color dot per sharing line, marking exactly which lines
+    // meet at this station - like the NYC map's interchange color
+    // indicators. With pillGeo present (mobile), dots stack HORIZONTALLY,
+    // each at its own line's real approach x (dotX, keyed by area id);
+    // without it (desktop), dots keep the original vertical stack in
+    // content.json's areas order.
     if (multiTone) {
       var toneColors = mod.areas.map(function (areaId) {
         var a = state.data.areas.filter(function (ar) { return ar.id === areaId; })[0];
         return a ? a.color : "#333";
       });
       var toneStart = -((shareCount - 1) / 2) * dotSpacing;
+
+      function toneDotPos(areaId, ti) {
+        if (pillGeo && pillGeo.dotX && areaId in pillGeo.dotX) {
+          return { x: pos.x + pillGeo.dotX[areaId], y: pos.y };
+        }
+        return { x: pos.x, y: pos.y + toneStart + ti * dotSpacing };
+      }
 
       // The pill's opaque white fill hides the real colored line for the
       // stretch between the pill's border and each dot, leaving a blank
@@ -1411,11 +1744,38 @@ function buildMap(app) {
         var pillRight = pos.x + pillW / 2 - 2;
         var pillTop = pos.y - pillH / 2 + 2;
         var pillBottom = pos.y + pillH / 2 - 2;
-        crossings.forEach(function (c) {
-          var dotY = pos.y + toneStart + c.toneIndex * dotSpacing;
-          var color = toneColors[c.toneIndex];
+
+        // 2026-08-10: mobile's crossings are keyed by area id (an object,
+        // { areaId: [sides] }) rather than desktop's toneIndex array
+        // ([{toneIndex, sides}]) - order-independent, since content.json's
+        // mod.areas order doesn't always match the sketch's left-to-right
+        // dot order (see build_vertical2.py's DOT_ORDER). Normalize both
+        // shapes into one {areaId, color, sides, dotPos} list so the draw
+        // loop below doesn't need to care which layout it's on.
+        var crossingList = [];
+        if (Array.isArray(crossings)) {
+          crossings.forEach(function (c) {
+            var areaId = mod.areas[c.toneIndex];
+            crossingList.push({
+              areaId: areaId, sides: c.sides,
+              color: toneColors[c.toneIndex], dotPos: toneDotPos(areaId, c.toneIndex)
+            });
+          });
+        } else {
+          Object.keys(crossings).forEach(function (areaId) {
+            var ti = mod.areas.indexOf(areaId);
+            crossingList.push({
+              areaId: areaId, sides: crossings[areaId],
+              color: ti !== -1 ? toneColors[ti] : "#333", dotPos: toneDotPos(areaId, ti)
+            });
+          });
+        }
+
+        crossingList.forEach(function (c) {
+          var dotX = c.dotPos.x, dotY = c.dotPos.y;
+          var color = c.color;
           (c.sides || []).forEach(function (side) {
-            var x1 = pos.x, y1 = dotY, x2 = pos.x, y2 = dotY;
+            var x1 = dotX, y1 = dotY, x2 = dotX, y2 = dotY;
             if (side === "left") { x1 = pillLeft; }
             else if (side === "right") { x2 = pillRight; }
             else if (side === "top") { y1 = pillTop; }
@@ -1435,10 +1795,12 @@ function buildMap(app) {
         });
       }
 
-      toneColors.forEach(function (color, ti) {
+      mod.areas.forEach(function (areaId, ti) {
+        var color = toneColors[ti];
+        var dp = toneDotPos(areaId, ti);
         var toneDot = svgEl("circle", {
-          cx: pos.x,
-          cy: pos.y + toneStart + ti * dotSpacing,
+          cx: dp.x,
+          cy: dp.y,
           r: 3.5,
           fill: color,
           class: "tone-dot",
@@ -1780,10 +2142,22 @@ function setupMapPanning(svg) {
 // first (14.2) but "ON" still crowded the circle's edge, so it was
 // dropped further to 10.5 - checked against the widest 2-letter
 // abbreviation (MB), not just ON, so every badge has real margin.
-var LEGEND_SCALE = 1.5;
+// 2026-08-08: LEGEND_SCALE and the box's position used to be hardcoded to
+// desktop's specific ~2230x1225 viewBox (x:1880, y:1010 = that canvas's own
+// bottom-right corner minus a fixed margin) - on the much narrower 1260-wide
+// mobile portrait canvas that pushed most of the box off the right edge
+// entirely. Both are now derived from the ACTIVE LAYOUT.viewBox: the scale
+// shrinks proportionally on narrower canvases (capped at the original 1.5
+// so it never grows past desktop's tuned size), and the box anchors to
+// that viewBox's own right/bottom edge with the same 100/90px margin
+// desktop always used. On desktop this resolves to the exact same
+// 1.5 / x:1280 / y:770 as before (no regression); on mobile it now sits
+// fully on-canvas near the bottom-right, sized to fit.
+var LAYOUT_VB_NOW = LAYOUT.viewBox.split(" ").map(Number);
+var LEGEND_SCALE = 1.5 * Math.min(1, LAYOUT_VB_NOW[2] / 2230);
 var MAP_LEGEND_BOX = { w: 400 * LEGEND_SCALE, h: 160 * LEGEND_SCALE };
-MAP_LEGEND_BOX.x = 1880 - MAP_LEGEND_BOX.w;
-MAP_LEGEND_BOX.y = 1010 - MAP_LEGEND_BOX.h;
+MAP_LEGEND_BOX.x = (LAYOUT_VB_NOW[0] + LAYOUT_VB_NOW[2]) - MAP_LEGEND_BOX.w - 100;
+MAP_LEGEND_BOX.y = (LAYOUT_VB_NOW[1] + LAYOUT_VB_NOW[3]) - MAP_LEGEND_BOX.h - 90;
 
 function renderMapLegendBox(svg) {
   var box = MAP_LEGEND_BOX;
@@ -2053,6 +2427,7 @@ function selectArea(areaId) {
   if (zoomTarget) animateMapViewBox(zoomTarget);
   document.getElementById("back-btn").classList.remove("hidden");
   document.getElementById("detail-panel").classList.add("hidden");
+  syncSheetBackdrop(false);
   var areaObj = state.data.areas.filter(function (a) { return a.id === areaId; })[0];
   document.getElementById("subtitle").textContent =
     "Viewing the " + areaObj.name + " line - tap a station, drag to explore other lines";
@@ -2067,6 +2442,7 @@ function backToOverview() {
   animateMapViewBox(fullViewBoxArray());
   document.getElementById("back-btn").classList.add("hidden");
   document.getElementById("detail-panel").classList.add("hidden");
+  syncSheetBackdrop(false);
   document.getElementById("subtitle").textContent = "Tap a line to explore its modalities";
 }
 
@@ -2076,6 +2452,7 @@ function backToStationList() {
   state.comparing = false;
   applyFocusState();
   document.getElementById("detail-panel").classList.add("hidden");
+  syncSheetBackdrop(false);
 }
 
 // Multi-line station labels (see LABEL_LINE_GAP / data-anchor-y etc. set
@@ -2226,17 +2603,20 @@ function breadcrumbHtml(area, mod, extra) {
 
 function renderDetailPanel() {
   var panel = document.getElementById("detail-panel");
+  var body = document.getElementById("detail-panel-body");
   if (!state.selectedStation) {
     panel.classList.add("hidden");
+    syncSheetBackdrop(false);
     return;
   }
 
   var mod = state.data.modalities.filter(function (m) { return m.id === state.selectedStation; })[0];
   var area = state.data.areas.filter(function (a) { return a.id === state.selectedArea; })[0];
   panel.classList.remove("hidden");
+  syncSheetBackdrop(true);
 
   if (mod.stubOnly) {
-    panel.innerHTML =
+    body.innerHTML =
       breadcrumbHtml(area, mod) +
       "<h3>" + esc(mod.name) + "</h3><p class=\"placeholder-note\">Stub station - full content not yet authored.</p>";
     wireBreadcrumb();
@@ -2244,7 +2624,7 @@ function renderDetailPanel() {
   }
 
   if (state.detailView === "drugs") {
-    panel.innerHTML =
+    body.innerHTML =
       breadcrumbHtml(area, mod, "Example drugs") +
       "<h3>" + esc(mod.name) + " - Example drugs</h3>" +
       "<ul class=\"drug-list\">" + drugListHtml(mod) + "</ul>" +
@@ -2252,7 +2632,7 @@ function renderDetailPanel() {
   } else if (state.detailView === "proscons") {
     var prosItems = mod.pros.map(function (p) { return "<li>" + esc(p) + "</li>"; }).join("");
     var consItems = mod.cons.map(function (c) { return "<li>" + esc(c) + "</li>"; }).join("");
-    panel.innerHTML =
+    body.innerHTML =
       breadcrumbHtml(area, mod, "Pros / Cons") +
       "<h3>" + esc(mod.name) + " - Pros / Cons</h3>" +
       "<div class=\"proscons-grid\">" +
@@ -2267,7 +2647,7 @@ function renderDetailPanel() {
       schematic = "<p class=\"schematic-caption\">Built from: " + mod.schematicParts.map(esc).join(" &middot; ") + "</p>";
     }
     var pinLabel = isPinned(mod.id) ? "📌 Pinned" : "📌 Pin to compare";
-    panel.innerHTML =
+    body.innerHTML =
       breadcrumbHtml(area, mod) +
       "<div class=\"layer3-heading\">" +
       "<h3>" + esc(mod.name) + "</h3>" +
@@ -2324,6 +2704,101 @@ function wirePanelButtons() {
 function wireToolbar() {
   document.getElementById("back-btn").addEventListener("click", backToOverview);
   document.getElementById("compare-btn").addEventListener("click", showCompareView);
+  wireDetailSheet();
+}
+
+// 2026-08-12: Google-Maps-style bottom sheet for station taps (mobile
+// breakpoint only, <=600px, matching MOBILE_LAYOUT's own breakpoint - see
+// the #detail-panel rules inside that media query in style.css). The
+// backdrop dims the map and closes the sheet on tap; syncSheetBackdrop is
+// called from every place that already shows/hides #detail-panel
+// (renderDetailPanel, renderComparePanel, selectArea, backToOverview,
+// backToStationList) so the backdrop always tracks the panel's own
+// visibility rather than needing separate state.
+// Tracks the pending "add .hidden back after the fade-out" timer so a
+// show->hide->show sequence (e.g. selectArea() closing the sheet and
+// selectStation() immediately reopening it, which happens on every single
+// station tap - selectArea always resets/hides the panel first as part of
+// switching lines) can't leave a stale timer that re-hides the backdrop
+// out from under an already-reopened sheet 250ms later.
+var sheetHideTimer = null;
+
+function syncSheetBackdrop(visible) {
+  var backdrop = document.getElementById("sheet-backdrop");
+  if (!backdrop) return;
+  if (sheetHideTimer) {
+    window.clearTimeout(sheetHideTimer);
+    sheetHideTimer = null;
+  }
+  if (visible && window.innerWidth <= 600) {
+    backdrop.classList.remove("hidden");
+    // remove/add on consecutive frames so the opacity transition actually
+    // plays instead of jumping straight to visible (display:none -> block
+    // has to happen before the opacity change for the CSS transition to
+    // be picked up by the browser).
+    requestAnimationFrame(function () {
+      backdrop.classList.add("visible");
+    });
+  } else {
+    backdrop.classList.remove("visible");
+    sheetHideTimer = window.setTimeout(function () {
+      backdrop.classList.add("hidden");
+      sheetHideTimer = null;
+    }, 250);
+  }
+}
+
+// Closing the sheet (backdrop tap or a swipe-down past the threshold)
+// should behave exactly like the equivalent explicit close action would -
+// reusing closeCompare/backToStationList instead of just hiding the panel
+// directly keeps state.comparing/state.selectedStation/state.pinned
+// consistent with every other way of closing it.
+function closeDetailSheet() {
+  if (state.comparing) {
+    closeCompare();
+  } else if (state.selectedStation) {
+    backToStationList();
+  }
+}
+
+function wireDetailSheet() {
+  var backdrop = document.getElementById("sheet-backdrop");
+  var panel = document.getElementById("detail-panel");
+  var handle = document.getElementById("sheet-handle");
+  if (!backdrop || !panel || !handle) return;
+
+  backdrop.addEventListener("click", closeDetailSheet);
+
+  var dragState = null;
+  var DISMISS_THRESHOLD = 90; // px of downward drag before release closes the sheet
+
+  handle.addEventListener("touchstart", function (e) {
+    if (window.innerWidth > 600 || !e.touches.length) return;
+    var t = e.touches[0];
+    dragState = { startY: t.clientY, currentY: t.clientY };
+    panel.style.transition = "none";
+  }, { passive: true });
+
+  handle.addEventListener("touchmove", function (e) {
+    if (!dragState || !e.touches.length) return;
+    var t = e.touches[0];
+    var dy = Math.max(0, t.clientY - dragState.startY);
+    dragState.currentY = t.clientY;
+    panel.style.transform = "translateY(" + dy + "px)";
+    e.preventDefault();
+  }, { passive: false });
+
+  function endDrag() {
+    if (!dragState) return;
+    var dy = Math.max(0, dragState.currentY - dragState.startY);
+    panel.style.transition = "";
+    panel.style.transform = "";
+    dragState = null;
+    if (dy > DISMISS_THRESHOLD) closeDetailSheet();
+  }
+
+  handle.addEventListener("touchend", endDrag, { passive: true });
+  handle.addEventListener("touchcancel", endDrag, { passive: true });
 }
 
 loadAtlas();

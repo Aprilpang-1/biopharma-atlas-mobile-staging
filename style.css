@@ -736,6 +736,37 @@ header h1 {
   box-shadow: 0 2px 14px rgba(0, 0, 0, 0.06);
 }
 
+/* 2026-08-12: dark scrim behind the mobile bottom sheet - see the
+   #detail-panel bottom-sheet rules in the 600px media query below for the
+   sheet itself. Tapping the backdrop closes the sheet (wired in app.js).
+   Kept display:none above 600px as a belt-and-suspenders guard alongside
+   the JS width check that only shows it at mobile widths in the first
+   place. */
+#sheet-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.35);
+  z-index: 39;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.25s ease;
+}
+
+#sheet-backdrop.visible {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+@media (min-width: 601px) {
+  #sheet-backdrop {
+    display: none !important;
+  }
+}
+
+.sheet-handle {
+  display: none;
+}
+
 #detail-panel h3 {
   margin: 0 0 0.4rem;
   font-weight: 700;
@@ -1005,5 +1036,51 @@ header h1 {
     flex-direction: column;
     align-items: flex-start;
     gap: 0.15rem;
+  }
+
+  /* 2026-08-12: Google-Maps-style bottom sheet for station taps. Below
+     the 600px breakpoint (same one MOBILE_LAYOUT already uses), the
+     detail panel switches from an inline card pushed below the map to a
+     fixed sheet anchored to the bottom edge that slides up over the map,
+     with a dark backdrop behind it. #detail-panel.hidden is overridden
+     here (instead of the shared .hidden { display:none }) so it stays
+     display:block and slides off-screen via transform instead - display
+     toggling can't be transitioned, so this is what makes the slide
+     animation possible on both open and close. Above 600px, the plain
+     .hidden rule and the base #detail-panel card styles further up this
+     file are untouched. */
+  #detail-panel {
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    top: auto;
+    margin-top: 0;
+    max-height: 75vh;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+    border-radius: 16px 16px 0 0;
+    border-bottom: none;
+    padding: 0 1.25rem 1.5rem;
+    z-index: 40;
+    transform: translateY(0);
+    transition: transform 0.32s cubic-bezier(0.32, 0.72, 0, 1);
+    box-shadow: 0 -6px 28px rgba(0, 0, 0, 0.16);
+  }
+
+  #detail-panel.hidden {
+    display: block !important;
+    transform: translateY(100%);
+    pointer-events: none;
+  }
+
+  .sheet-handle {
+    display: block;
+    width: 36px;
+    height: 4px;
+    border-radius: 2px;
+    background: #d8d8d8;
+    margin: 0.65rem auto 0.5rem;
+    touch-action: none;
   }
 }
