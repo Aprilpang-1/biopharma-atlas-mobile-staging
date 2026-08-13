@@ -560,6 +560,20 @@ header h1 {
   color: #333;
 }
 
+/* 2026-08-12: floating legend-toggle FAB - only shown at mobile widths
+   (see the full-screen layout block in the 600px media query below),
+   where it expands the SVG's own in-map legend-box (renderMapLegendBox,
+   app.js) as an overlay instead of the desktop's always-visible corner
+   box + separate #map-legend row. Hidden here by default so desktop is
+   completely unaffected. */
+#legend-toggle {
+  display: none;
+  padding: 0;
+  border: none;
+  background: none;
+  cursor: pointer;
+}
+
 .legend-item {
   display: inline-flex;
   align-items: center;
@@ -989,8 +1003,12 @@ header h1 {
     font-size: 0.85rem;
   }
 
+  /* 2026-08-12: reverted back to hidden - the full-screen redesign below
+     removes the in-flow spot this hint used to sit in, and pinch/pan is
+     now the obvious primary gesture on an edge-to-edge map, same as any
+     real map app. */
   .scroll-hint {
-    display: block;
+    display: none;
   }
 
   /* 2026-08-05: the map's touch gestures now pan/zoom the SVG's own
@@ -1082,5 +1100,122 @@ header h1 {
     background: #d8d8d8;
     margin: 0.65rem auto 0.5rem;
     touch-action: none;
+  }
+
+  /* 2026-08-12: full-screen "Google Maps style" mobile layout - the map
+     now fills the entire viewport edge-to-edge (see #app below) instead of
+     sitting in the page's normal in-flow layout, so header/toolbar/legend
+     all move out of flow too and float on top of the map instead. Gated to
+     this same 600px breakpoint as everything else in this file; desktop
+     keeps the original in-page layout completely untouched. */
+  body {
+    padding: 0;
+  }
+
+  #app {
+    position: fixed;
+    inset: 0;
+    margin: 0;
+    padding: 0;
+    min-height: 0;
+    z-index: 1;
+  }
+
+  /* the old in-flow HTML legend row below the map is redundant now - its
+     content is the same set of areas as the SVG legend-box, which the new
+     #legend-toggle FAB below reveals as an overlay instead. */
+  #map-legend {
+    display: none;
+  }
+
+  header {
+    position: fixed;
+    top: calc(0.75rem + env(safe-area-inset-top, 0px));
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 45;
+    margin: 0;
+    max-width: calc(100vw - 2rem);
+    padding: 0.55rem 1.15rem;
+    border: none;
+    border-radius: 20px;
+    background: rgba(255, 255, 255, 0.9);
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+    box-shadow: 0 4px 18px rgba(0, 0, 0, 0.18);
+    text-align: center;
+    transition: opacity 0.2s ease;
+  }
+
+  header h1 {
+    font-size: 1rem;
+    margin: 0;
+  }
+
+  .subtitle {
+    font-size: 0.72rem;
+    margin: 0.1rem 0 0;
+  }
+
+  #toolbar {
+    position: fixed;
+    top: calc(4.1rem + env(safe-area-inset-top, 0px));
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 45;
+    min-height: 0;
+    margin: 0;
+    display: flex;
+    gap: 0.5rem;
+    transition: opacity 0.2s ease;
+  }
+
+  #back-btn,
+  #compare-btn {
+    background: rgba(255, 255, 255, 0.92);
+    backdrop-filter: blur(8px);
+    margin-right: 0;
+  }
+
+  #legend-toggle {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    position: fixed;
+    right: 1rem;
+    bottom: calc(1rem + env(safe-area-inset-bottom, 0px));
+    width: 48px;
+    height: 48px;
+    border-radius: 50%;
+    background: rgba(255, 255, 255, 0.92);
+    backdrop-filter: blur(8px);
+    box-shadow: 0 4px 14px rgba(0, 0, 0, 0.22);
+    color: #17202a;
+    z-index: 45;
+    transition: opacity 0.2s ease, transform 0.15s ease, background 0.15s ease, color 0.15s ease;
+  }
+
+  #legend-toggle:active {
+    transform: scale(0.94);
+  }
+
+  /* reflects the SVG legend-box's own open/closed state (toggled in
+     app.js) onto the FAB, without needing to keep a second class in sync
+     by hand - if a browser doesn't support :has() yet, the FAB just stays
+     its default color, which is a harmless fallback. */
+  body:has(#map-legend-box-group.open) #legend-toggle {
+    background: #457B9D;
+    color: #fff;
+  }
+
+  /* fades the floating chrome out while the bottom sheet is open, the same
+     way Google Maps hides its own floating search bar/FABs behind an open
+     place-detail sheet - see the body.sheet-open toggle inside
+     syncSheetBackdrop, app.js. */
+  body.sheet-open header,
+  body.sheet-open #toolbar,
+  body.sheet-open #legend-toggle {
+    opacity: 0;
+    pointer-events: none;
   }
 }

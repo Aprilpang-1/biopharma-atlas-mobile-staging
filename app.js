@@ -2159,7 +2159,17 @@ var MAP_LEGEND_BOX = { w: 400 * LEGEND_SCALE, h: 160 * LEGEND_SCALE };
 MAP_LEGEND_BOX.x = (LAYOUT_VB_NOW[0] + LAYOUT_VB_NOW[2]) - MAP_LEGEND_BOX.w - 100;
 MAP_LEGEND_BOX.y = (LAYOUT_VB_NOW[1] + LAYOUT_VB_NOW[3]) - MAP_LEGEND_BOX.h - 90;
 
+// 2026-08-12: everything this function draws now lives inside its own <g>
+// (id="map-legend-box-group") instead of being appended straight onto the
+// svg root. Desktop still shows it always-on, same as before (no CSS rule
+// hides the group there) - but the mobile full-screen layout needs a way
+// to hide/show this box as a whole behind the new #legend-toggle FAB
+// (wireLegendToggle below), and toggling one group's class is far simpler
+// than toggling display on every rect/circle/text this function creates.
 function renderMapLegendBox(svg) {
+  var group = svgEl("g", { class: "legend-box-group", id: "map-legend-box-group" });
+  svg.appendChild(group);
+
   var box = MAP_LEGEND_BOX;
   var s = LEGEND_SCALE;
   var titleSize = 14 * s;
@@ -2167,12 +2177,12 @@ function renderMapLegendBox(svg) {
   var badgeTextSize = 10.5 * s;
   var nameSize = 10 * s;
 
-  svg.appendChild(svgEl("rect", {
+  group.appendChild(svgEl("rect", {
     x: box.x, y: box.y, width: box.w, height: box.h,
     rx: 8 * s, fill: "#fdfdfb", stroke: "#111", "stroke-width": 2 * s,
     class: "legend-box"
   }));
-  svg.appendChild(svgEl("text", {
+  group.appendChild(svgEl("text", {
     x: box.x + 10 * s, y: box.y + 16 * s,
     class: "legend-box-title",
     style: "font-size:" + titleSize + "px"
@@ -2194,7 +2204,7 @@ function renderMapLegendBox(svg) {
       "data-area": area.id
     });
     swatch.addEventListener("click", function () { selectArea(area.id); });
-    svg.appendChild(swatch);
+    group.appendChild(swatch);
 
     var swatchText = svgEl("text", {
       x: cx, y: cy + badgeTextSize * 0.34,
@@ -2204,7 +2214,7 @@ function renderMapLegendBox(svg) {
       style: "font-size:" + badgeTextSize + "px"
     });
     swatchText.textContent = area.abbr || "";
-    svg.appendChild(swatchText);
+    group.appendChild(swatchText);
 
     var nameText = svgEl("text", {
       x: cx + badgeRadius + 6 * s, y: cy + nameSize * 0.34,
@@ -2214,7 +2224,7 @@ function renderMapLegendBox(svg) {
     });
     nameText.textContent = area.name;
     nameText.addEventListener("click", function () { selectArea(area.id); });
-    svg.appendChild(nameText);
+    group.appendChild(nameText);
   });
 }
 
@@ -2705,6 +2715,24 @@ function wireToolbar() {
   document.getElementById("back-btn").addEventListener("click", backToOverview);
   document.getElementById("compare-btn").addEventListener("click", showCompareView);
   wireDetailSheet();
+  wireLegendToggle();
+}
+
+// 2026-08-12: full-screen mobile layout's legend FAB (see #legend-toggle in
+// style.css). #legend-toggle itself lives outside #app in the static HTML,
+// so it survives every map rebuild - but the <g id="map-legend-box-group">
+// it toggles is drawn fresh inside the SVG on every buildMap() call (line
+// selection, back navigation, etc. all rebuild the map from scratch). So
+// this looks the group up fresh inside the click handler every time,
+// rather than capturing it once here, which would go stale (pointing at a
+// detached node) the moment the map rebuilds after the first click.
+function wireLegendToggle() {
+  var btn = document.getElementById("legend-toggle");
+  if (!btn) return;
+  btn.addEventListener("click", function () {
+    var group = document.getElementById("map-legend-box-group");
+    if (group) group.classList.toggle("open");
+  });
 }
 
 // 2026-08-12: Google-Maps-style bottom sheet for station taps (mobile
@@ -2730,7 +2758,13 @@ function syncSheetBackdrop(visible) {
     window.clearTimeout(sheetHideTimer);
     sheetHideTimer = null;
   }
-  if (visible && window.innerWidth <= 600) {
+  var mobileOpen = !!(visible && window.innerWidth <= 600);
+  // 2026-08-12: drives the full-screen layout's "fade the floating
+  // header/toolbar/legend FAB out while the sheet is open" rules in
+  // style.css (body.sheet-open ...) - kept in this one funnel function
+  // alongside the backdrop itself so both always track the same state.
+  document.body.classList.toggle("sheet-open", mobileOpen);
+  if (mobileOpen) {
     backdrop.classList.remove("hidden");
     // remove/add on consecutive frames so the opacity transition actually
     // plays instead of jumping straight to visible (display:none -> block
