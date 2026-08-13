@@ -560,12 +560,11 @@ header h1 {
   color: #333;
 }
 
-/* 2026-08-12: floating legend-toggle FAB - only shown at mobile widths
-   (see the full-screen layout block in the 600px media query below),
-   where it expands the SVG's own in-map legend-box (renderMapLegendBox,
-   app.js) as an overlay instead of the desktop's always-visible corner
-   box + separate #map-legend row. Hidden here by default so desktop is
-   completely unaffected. */
+/* 2026-08-12 (2026-08-13: reworked to popover the HTML #map-legend list
+   instead of the tiny in-SVG box - see that rule's own comment below):
+   floating legend-toggle FAB - only shown at mobile widths (see the
+   full-screen layout block in the 600px media query below). Hidden here
+   by default so desktop is completely unaffected. */
 #legend-toggle {
   display: none;
   padding: 0;
@@ -1121,11 +1120,42 @@ header h1 {
     z-index: 1;
   }
 
-  /* the old in-flow HTML legend row below the map is redundant now - its
-     content is the same set of areas as the SVG legend-box, which the new
-     #legend-toggle FAB below reveals as an overlay instead. */
+  /* 2026-08-13: the SVG's own in-map legend-box (renderMapLegendBox,
+     app.js) is dropped entirely on mobile now - April wants only the FAB
+     visible on the map itself, no badge box drawn on the canvas at all. */
+  .legend-box-group {
+    display: none;
+  }
+
+  /* #map-legend (the HTML list already built by renderLegend(), same
+     content as the SVG box but bigger/more legible) becomes the FAB's
+     popover instead of an in-flow row below the map - hidden by default,
+     shown as a floating card above the FAB via the .open class toggled in
+     wireLegendToggle (app.js). Living outside #app means it survives every
+     map rebuild, so there's no stale-reference risk toggling it. */
   #map-legend {
     display: none;
+    position: fixed;
+    right: 1rem;
+    bottom: calc(4.75rem + env(safe-area-inset-bottom, 0px));
+    left: auto;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.4rem;
+    max-width: calc(100vw - 2rem);
+    margin: 0;
+    padding: 0.85rem 1rem;
+    border-radius: 14px;
+    border-top: none;
+    background: rgba(255, 255, 255, 0.96);
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+    box-shadow: 0 6px 24px rgba(0, 0, 0, 0.22);
+    z-index: 44;
+  }
+
+  #map-legend.open {
+    display: flex;
   }
 
   header {
@@ -1199,11 +1229,11 @@ header h1 {
     transform: scale(0.94);
   }
 
-  /* reflects the SVG legend-box's own open/closed state (toggled in
-     app.js) onto the FAB, without needing to keep a second class in sync
-     by hand - if a browser doesn't support :has() yet, the FAB just stays
-     its default color, which is a harmless fallback. */
-  body:has(#map-legend-box-group.open) #legend-toggle {
+  /* reflects the popover's own open/closed state onto the FAB, without
+     needing to keep a second class in sync by hand - if a browser doesn't
+     support :has() yet, the FAB just stays its default color, which is a
+     harmless fallback. */
+  body:has(#map-legend.open) #legend-toggle {
     background: #457B9D;
     color: #fff;
   }

@@ -883,16 +883,30 @@ function fitMapToContainer(app) {
   var ch = app.clientHeight;
   if (!cw || !ch) return;
 
-  // mirrors the existing mobile breakpoint (see the max-width:600px media
-  // query in style.css, which drops min-width to 0 there) - below that,
-  // let the map shrink freely to actually fit the phone's screen; above
-  // it, never shrink narrower than 900px, matching the desktop
-  // min-width - past that point it's meant to pan/scroll, not shrink
-  // into illegibility.
-  var minW = window.innerWidth <= 600 ? 0 : 900;
+  // 2026-08-13: full-screen mobile layout - the map's own viewBox is a
+  // tall portrait shape, which on most phones is narrower than the
+  // phone's own aspect ratio. "Contain" fit (the desktop math below) fits
+  // that whole shape on-screen and leaves it centered with empty margins
+  // on the sides, which is exactly the "not full width" gap April flagged.
+  // A real map app doesn't do that - it always fills the whole screen and
+  // crops whatever doesn't fit, letting you drag to reach the cropped
+  // part. So at mobile widths, size the SVG to exactly the container's
+  // box (no letterboxing math at all) and switch preserveAspectRatio to
+  // "slice" so the browser scales the viewBox up to cover that box and
+  // crops the overflow, instead of the default "meet" (shrink to fit
+  // inside, letterboxed). The existing drag-to-pan (setupMapPanning)
+  // already works purely in viewBox space, so it keeps working unchanged
+  // to reach whatever got cropped off the top/bottom.
+  if (window.innerWidth <= 600) {
+    svg.setAttribute("preserveAspectRatio", "xMidYMid slice");
+    svg.style.width = cw + "px";
+    svg.style.height = ch + "px";
+    return;
+  }
 
+  svg.setAttribute("preserveAspectRatio", "xMidYMid meet");
   var scale = Math.min(cw / vbW, ch / vbH);
-  var w = Math.max(vbW * scale, minW);
+  var w = Math.max(vbW * scale, 900);
   var h = w * (vbH / vbW);
 
   svg.style.width = w + "px";
@@ -2718,20 +2732,30 @@ function wireToolbar() {
   wireLegendToggle();
 }
 
-// 2026-08-12: full-screen mobile layout's legend FAB (see #legend-toggle in
-// style.css). #legend-toggle itself lives outside #app in the static HTML,
-// so it survives every map rebuild - but the <g id="map-legend-box-group">
-// it toggles is drawn fresh inside the SVG on every buildMap() call (line
-// selection, back navigation, etc. all rebuild the map from scratch). So
-// this looks the group up fresh inside the click handler every time,
-// rather than capturing it once here, which would go stale (pointing at a
-// detached node) the moment the map rebuilds after the first click.
+// 2026-08-12 (2026-08-13: switched from toggling the in-SVG legend-box to
+// popovering the HTML #map-legend list instead - the SVG box is fixed at
+// its map-space corner position and would land wherever the user had
+// panned/zoomed to, and April wants the badge dropped from the map canvas
+// entirely anyway, keeping only this FAB): full-screen mobile layout's
+// legend FAB (see #legend-toggle/#map-legend.open in style.css). Both
+// elements live outside #app in the static HTML, so they survive every map
+// rebuild (line selection, back navigation, etc.) with no stale-reference
+// risk - unlike anything drawn inside the SVG itself.
 function wireLegendToggle() {
   var btn = document.getElementById("legend-toggle");
-  if (!btn) return;
+  var panel = document.getElementById("map-legend");
+  if (!btn || !panel) return;
   btn.addEventListener("click", function () {
-    var group = document.getElementById("map-legend-box-group");
-    if (group) group.classList.toggle("open");
+    panel.classList.toggle("open");
+  });
+  // tapping a line inside the popover already jumps the map to it
+  // (selectArea, wired in renderLegend) - closing the popover at the same
+  // time keeps the map from being covered up by its own legend right when
+  // the user is trying to look at the newly-focused line.
+  panel.addEventListener("click", function (e) {
+    if (e.target.closest(".legend-item")) {
+      panel.classList.remove("open");
+    }
   });
 }
 
