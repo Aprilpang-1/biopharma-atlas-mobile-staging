@@ -883,28 +883,53 @@ function fitMapToContainer(app) {
   var ch = app.clientHeight;
   if (!cw || !ch) return;
 
-  // 2026-08-13: full-screen mobile layout - the map's own viewBox is a
-  // tall portrait shape, which on most phones is narrower than the
-  // phone's own aspect ratio. "Contain" fit (the desktop math below) fits
-  // that whole shape on-screen and leaves it centered with empty margins
-  // on the sides, which is exactly the "not full width" gap April flagged.
-  // A real map app doesn't do that - it always fills the whole screen and
-  // crops whatever doesn't fit, letting you drag to reach the cropped
-  // part. So at mobile widths, size the SVG to exactly the container's
-  // box (no letterboxing math at all) and switch preserveAspectRatio to
-  // "slice" so the browser scales the viewBox up to cover that box and
-  // crops the overflow, instead of the default "meet" (shrink to fit
-  // inside, letterboxed). The existing drag-to-pan (setupMapPanning)
-  // already works purely in viewBox space, so it keeps working unchanged
-  // to reach whatever got cropped off the top/bottom.
+  // 2026-08-13: tried a "fill both dimensions, crop the overflow"
+  // (preserveAspectRatio: slice) approach for the full-screen layout
+  // earlier today, but April flagged 3 real problems with it: part of the
+  // map (e.g. the top of the IM/ON lines) was permanently cropped off
+  // until you thought to drag-pan there, the bigger effective zoom level
+  // made some station labels overlap their own line, and the floating
+  // header pill sat directly on top of live line content instead of
+  // empty margin. Reverted to "contain" fit (see the WHOLE map at once,
+  // like a subway map poster) - MOBILE_LAYOUT.viewBox is a very tall,
+  // narrow shape (673 x 1979, about 1:2.9) compared to any phone screen
+  // (roughly 1:2 at most), so contain-fit can't reach 100% edge-to-edge
+  // width without cropping or distorting - some side margin is the
+  // unavoidable trade-off for "always see the entire map, nothing
+  // hidden". This still fits noticeably wider than before the full-screen
+  // change, though, since it now fits against #app's true edge-to-edge
+  // height instead of the old in-page height that toolbar/legend/etc used
+  // to eat into. topSafe reserves room at the top so the map starts below
+  // the floating header pill instead of directly underneath it.
   if (window.innerWidth <= 600) {
-    svg.setAttribute("preserveAspectRatio", "xMidYMid slice");
-    svg.style.width = cw + "px";
-    svg.style.height = ch + "px";
+    // matches the floating header pill's actual footprint (top offset +
+    // padding + title/subtitle line height, see the header rule in the
+    // mobile block of style.css) plus a small buffer - kept as tight as
+    // possible since every px reserved here also shrinks the map's width
+    // proportionally (contain-fit is height-bound on this viewBox shape,
+    // so less height budget means less width too, not just less height).
+    var topSafe = 70;
+    var usableH = Math.max(ch - topSafe, 100);
+    var mScale = Math.min(cw / vbW, usableH / vbH);
+    var mW = vbW * mScale;
+    var mH = vbH * mScale;
+    svg.setAttribute("preserveAspectRatio", "xMidYMid meet");
+    svg.style.width = mW + "px";
+    svg.style.height = mH + "px";
+    svg.style.position = "absolute";
+    svg.style.left = "50%";
+    svg.style.top = topSafe + "px";
+    svg.style.transform = "translateX(-50%)";
+    svg.style.margin = "0";
     return;
   }
 
   svg.setAttribute("preserveAspectRatio", "xMidYMid meet");
+  svg.style.position = "";
+  svg.style.left = "";
+  svg.style.top = "";
+  svg.style.transform = "";
+  svg.style.margin = "";
   var scale = Math.min(cw / vbW, ch / vbH);
   var w = Math.max(vbW * scale, 900);
   var h = w * (vbH / vbW);
