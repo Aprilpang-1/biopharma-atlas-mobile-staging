@@ -883,43 +883,33 @@ function fitMapToContainer(app) {
   var ch = app.clientHeight;
   if (!cw || !ch) return;
 
-  // 2026-08-13: tried a "fill both dimensions, crop the overflow"
-  // (preserveAspectRatio: slice) approach for the full-screen layout
-  // earlier today, but April flagged 3 real problems with it: part of the
-  // map (e.g. the top of the IM/ON lines) was permanently cropped off
-  // until you thought to drag-pan there, the bigger effective zoom level
-  // made some station labels overlap their own line, and the floating
-  // header pill sat directly on top of live line content instead of
-  // empty margin. Reverted to "contain" fit (see the WHOLE map at once,
-  // like a subway map poster) - MOBILE_LAYOUT.viewBox is a very tall,
-  // narrow shape (673 x 1979, about 1:2.9) compared to any phone screen
-  // (roughly 1:2 at most), so contain-fit can't reach 100% edge-to-edge
-  // width without cropping or distorting - some side margin is the
-  // unavoidable trade-off for "always see the entire map, nothing
-  // hidden". This still fits noticeably wider than before the full-screen
-  // change, though, since it now fits against #app's true edge-to-edge
-  // height instead of the old in-page height that toolbar/legend/etc used
-  // to eat into. topSafe reserves room at the top so the map starts below
-  // the floating header pill instead of directly underneath it.
+  // 2026-08-13: April confirmed she wants edge-to-edge fill (no side
+  // margins) over "always see the whole map" - a real map app tradeoff,
+  // same as never seeing the entire world map at once in Google Maps.
+  // Back to preserveAspectRatio:slice (cover-and-crop) for that, but this
+  // time reserving room at the top for the floating header pill WITHOUT
+  // shrinking the achieved width, unlike the contain-fit attempt earlier
+  // today where any reserved height directly cost width too (because
+  // contain-fit was height-bound on this viewBox's tall shape). Under
+  // cover-fit here, width is already the binding constraint (cw/vbW >
+  // ch/vbH for this shape against any phone screen) - which means
+  // shrinking the height budget alone doesn't change the scale/width at
+  // all, it just crops a bit more off the bottom of what's visible
+  // on-screen at once. So: full cw width, ch-topSafe height, positioned
+  // to start just below the header - full edge-to-edge width, zero cost.
   if (window.innerWidth <= 600) {
     // matches the floating header pill's actual footprint (top offset +
     // padding + title/subtitle line height, see the header rule in the
-    // mobile block of style.css) plus a small buffer - kept as tight as
-    // possible since every px reserved here also shrinks the map's width
-    // proportionally (contain-fit is height-bound on this viewBox shape,
-    // so less height budget means less width too, not just less height).
+    // mobile block of style.css) plus a small buffer.
     var topSafe = 70;
-    var usableH = Math.max(ch - topSafe, 100);
-    var mScale = Math.min(cw / vbW, usableH / vbH);
-    var mW = vbW * mScale;
-    var mH = vbH * mScale;
-    svg.setAttribute("preserveAspectRatio", "xMidYMid meet");
-    svg.style.width = mW + "px";
-    svg.style.height = mH + "px";
+    var boxH = Math.max(ch - topSafe, 100);
+    svg.setAttribute("preserveAspectRatio", "xMidYMid slice");
+    svg.style.width = cw + "px";
+    svg.style.height = boxH + "px";
     svg.style.position = "absolute";
-    svg.style.left = "50%";
+    svg.style.left = "0";
     svg.style.top = topSafe + "px";
-    svg.style.transform = "translateX(-50%)";
+    svg.style.transform = "";
     svg.style.margin = "0";
     return;
   }
