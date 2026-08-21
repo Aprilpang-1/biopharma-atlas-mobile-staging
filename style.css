@@ -486,6 +486,22 @@ header h1 {
   transition: opacity 0.3s ease;
 }
 
+/* 2026-08-13: the radial wheel's center hub (buildWheelMap, app.js) -
+   purely decorative/non-interactive, so no cursor:pointer or hover state
+   like the clickable map elements above. */
+.wheel-hub {
+  fill: #17202a;
+}
+
+.wheel-hub-text {
+  font-size: 20px;
+  font-weight: 800;
+  fill: #fff;
+  text-anchor: middle;
+  dominant-baseline: central;
+  pointer-events: none;
+}
+
 .area-badge.faded {
   fill: #ccc !important;
   opacity: 0.7;

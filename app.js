@@ -883,33 +883,27 @@ function fitMapToContainer(app) {
   var ch = app.clientHeight;
   if (!cw || !ch) return;
 
-  // 2026-08-13: April confirmed she wants edge-to-edge fill (no side
-  // margins) over "always see the whole map" - a real map app tradeoff,
-  // same as never seeing the entire world map at once in Google Maps.
-  // Back to preserveAspectRatio:slice (cover-and-crop) for that, but this
-  // time reserving room at the top for the floating header pill WITHOUT
-  // shrinking the achieved width, unlike the contain-fit attempt earlier
-  // today where any reserved height directly cost width too (because
-  // contain-fit was height-bound on this viewBox's tall shape). Under
-  // cover-fit here, width is already the binding constraint (cw/vbW >
-  // ch/vbH for this shape against any phone screen) - which means
-  // shrinking the height budget alone doesn't change the scale/width at
-  // all, it just crops a bit more off the bottom of what's visible
-  // on-screen at once. So: full cw width, ch-topSafe height, positioned
-  // to start just below the header - full edge-to-edge width, zero cost.
-  if (window.innerWidth <= 600) {
-    // matches the floating header pill's actual footprint (top offset +
-    // padding + title/subtitle line height, see the header rule in the
-    // mobile block of style.css) plus a small buffer.
+  // 2026-08-13: superseded by the radial wheel - the fill-edge-to-edge/
+  // crop approach this comment used to describe was built for the tall,
+  // narrow metro-line viewBox specifically (see buildWheelMap's own
+  // comment for why that shape forced the fill-vs-see-everything
+  // tradeoff in the first place). The wheel's viewBox is roughly square,
+  // so plain contain-fit already uses nearly the full width with no
+  // cropping needed - just reserve room at the top for the floating
+  // header pill, same as every other floating-chrome element on this
+  // page already does.
+  if (isWheelMode()) {
     var topSafe = 70;
-    var boxH = Math.max(ch - topSafe, 100);
-    svg.setAttribute("preserveAspectRatio", "xMidYMid slice");
-    svg.style.width = cw + "px";
-    svg.style.height = boxH + "px";
+    var usableH = Math.max(ch - topSafe, 100);
+    var wScale = Math.min(cw / vbW, usableH / vbH);
+    var wW = vbW * wScale, wH = vbH * wScale;
+    svg.setAttribute("preserveAspectRatio", "xMidYMid meet");
+    svg.style.width = wW + "px";
+    svg.style.height = wH + "px";
     svg.style.position = "absolute";
-    svg.style.left = "0";
+    svg.style.left = "50%";
     svg.style.top = topSafe + "px";
-    svg.style.transform = "";
+    svg.style.transform = "translateX(-50%)";
     svg.style.margin = "0";
     return;
   }
@@ -1572,7 +1566,164 @@ function buildCityBackground(svg, vbParts) {
   svg.appendChild(g);
 }
 
+// ---- Radial wheel (mobile) ----
+// 2026-08-13: replaces the metro-line rendering for mobile widths, per
+// April's call to move away from a tall vertical strip that couldn't fit
+// a phone screen without either cropping or big side margins. Unlike
+// MOBILE_LAYOUT above (a hand-authored coordinate table that needed
+// manual re-plotting every time a station was added - see the many
+// "extend line layout" tasks in this file's history), this geometry is
+// fully COMPUTED from state.data at build time: areas become spokes
+// radiating from a central hub, modalities become dots along their own
+// spoke. A new area or modality in content.json places itself on the
+// wheel automatically, no coordinate work required.
+//
+// Deliberately reuses the exact classes/data-attributes the metro code
+// already wires up - .line-path[data-area], .area-badge[data-area],
+// .station-dot[data-station], clicks calling the same selectArea()/
+// selectStation() - so every existing interaction (applyFocusState's
+// fade-on-select, the detail bottom sheet, pin-to-compare) keeps working
+// completely unchanged; this file only adds the drawing code, not new
+// interaction logic. Panning/zooming (setupMapPanning,
+// computeLineZoomViewBox) is skipped on purpose - a wheel this size is
+// meant to be seen whole, not cropped and panned.
+//
+// v1 per April's explicit "we'll revise from here": shared/interchange
+// modalities (e.g. ADC, spanning Immunology + Oncology) are drawn once on
+// their primary area's spoke with no visual distinction yet beyond the
+// existing .interchange-dot style, and the hub gets crowded where many
+// low-index shared stations cluster - both flagged already as the next
+// round of polish, not attempted here.
+var WHEEL_HUB_R = 30;
+var WHEEL_GAP = 45;
+var WHEEL_BADGE_MARGIN = 40;
+
+function isWheelMode() {
+  return LAYOUT === MOBILE_LAYOUT;
+}
+
+function wheelPerArea() {
+  var per = {};
+  state.data.areas.forEach(function (a) { per[a.id] = []; });
+  state.data.modalities.forEach(function (m) {
+    m.areas.forEach(function (aid) {
+      if (per[aid]) per[aid].push(m);
+    });
+  });
+  return per;
+}
+
+function wheelPolar(cx, cy, angleDeg, r) {
+  var rad = (angleDeg * Math.PI) / 180;
+  return { x: cx + r * Math.cos(rad), y: cy + r * Math.sin(rad) };
+}
+
+function buildWheelMap(app) {
+  var areas = state.data.areas;
+  var perArea = wheelPerArea();
+  var maxCount = 0;
+  areas.forEach(function (a) {
+    maxCount = Math.max(maxCount, perArea[a.id].length);
+  });
+  var n = areas.length;
+  var angleStep = 360 / n;
+  var startAngle = -90;
+  var spokeAngle = {};
+  areas.forEach(function (a, i) {
+    spokeAngle[a.id] = startAngle + i * angleStep;
+  });
+  var maxR = WHEEL_HUB_R + maxCount * WHEEL_GAP;
+  var half = maxR + WHEEL_BADGE_MARGIN;
+  var size = half * 2;
+  var cx = half, cy = half;
+
+  // MOBILE_LAYOUT.viewBox is read all over this file (fitMapToContainer,
+  // fullViewBoxArray, computeLineZoomViewBox) - mutating this one property
+  // (const only locks the variable binding, not the object's contents)
+  // keeps all of those working against the wheel's actual computed size
+  // with zero further changes.
+  MOBILE_LAYOUT.viewBox = "0 0 " + size + " " + size;
+
+  var svg = svgEl("svg", { id: "subway-map", viewBox: MOBILE_LAYOUT.viewBox });
+  var mapContent = svgEl("g", { id: "map-content" });
+  svg.appendChild(mapContent);
+
+  areas.forEach(function (area) {
+    var ang = spokeAngle[area.id];
+    var outerR = WHEEL_HUB_R + perArea[area.id].length * WHEEL_GAP;
+    var p0 = wheelPolar(cx, cy, ang, WHEEL_HUB_R);
+    var p1 = wheelPolar(cx, cy, ang, outerR);
+    var line = svgEl("path", {
+      d: "M" + p0.x + " " + p0.y + " L" + p1.x + " " + p1.y,
+      class: "line-path",
+      stroke: area.color,
+      fill: "none",
+      "data-area": area.id
+    });
+    line.addEventListener("click", function () { selectArea(area.id); });
+    mapContent.appendChild(line);
+  });
+
+  var hub = svgEl("circle", {
+    cx: cx, cy: cy, r: WHEEL_HUB_R * 0.6, class: "wheel-hub"
+  });
+  mapContent.appendChild(hub);
+  var hubText = svgEl("text", { x: cx, y: cy, class: "wheel-hub-text" });
+  hubText.textContent = "Rx";
+  mapContent.appendChild(hubText);
+
+  areas.forEach(function (area) {
+    perArea[area.id].forEach(function (mod, idx) {
+      // Shared modalities are drawn once, on their primary (first-listed)
+      // area only - a tap from any other area it belongs to still finds
+      // this same element via data-station (applyFocusState/selectStation
+      // look it up by id, not by which spoke it's drawn on).
+      if (mod.areas[0] !== area.id) return;
+      var ang = spokeAngle[area.id];
+      var r = WHEEL_HUB_R + (idx + 1) * WHEEL_GAP;
+      var p = wheelPolar(cx, cy, ang, r);
+      var isInterchange = mod.areas.length > 1;
+      var dot = svgEl("circle", {
+        cx: p.x, cy: p.y,
+        class: "station-dot" + (isInterchange ? " interchange-dot" : ""),
+        fill: isInterchange ? "#fff" : area.color,
+        stroke: "#111",
+        "stroke-width": isInterchange ? 4 : 1.5,
+        "data-station": mod.id
+      });
+      dot.addEventListener("click", function () { selectStation(mod.id); });
+      mapContent.appendChild(dot);
+    });
+  });
+
+  areas.forEach(function (area) {
+    var ang = spokeAngle[area.id];
+    var outerR = WHEEL_HUB_R + perArea[area.id].length * WHEEL_GAP + 28;
+    var p = wheelPolar(cx, cy, ang, outerR);
+    var badge = svgEl("circle", {
+      cx: p.x, cy: p.y, r: 16, fill: area.color,
+      class: "area-badge", "data-area": area.id
+    });
+    badge.addEventListener("click", function () { selectArea(area.id); });
+    mapContent.appendChild(badge);
+    var badgeText = svgEl("text", {
+      x: p.x, y: p.y, "text-anchor": "middle",
+      class: "area-badge-text", "data-area": area.id
+    });
+    badgeText.textContent = area.abbr || area.name.slice(0, 2).toUpperCase();
+    badgeText.addEventListener("click", function () { selectArea(area.id); });
+    mapContent.appendChild(badgeText);
+  });
+
+  app.innerHTML = "";
+  app.appendChild(svg);
+}
+
 function buildMap(app) {
+  if (isWheelMode()) {
+    buildWheelMap(app);
+    return;
+  }
   var svg = svgEl("svg", { id: "subway-map", viewBox: LAYOUT.viewBox });
 
   var vbParts = LAYOUT.viewBox.split(" ");
@@ -2468,8 +2619,9 @@ function selectArea(areaId) {
   document.getElementById("detail-panel").classList.add("hidden");
   syncSheetBackdrop(false);
   var areaObj = state.data.areas.filter(function (a) { return a.id === areaId; })[0];
-  document.getElementById("subtitle").textContent =
-    "Viewing the " + areaObj.name + " line - tap a station, drag to explore other lines";
+  document.getElementById("subtitle").textContent = isWheelMode()
+    ? "Viewing " + areaObj.name + " - tap a station for its detail"
+    : "Viewing the " + areaObj.name + " line - tap a station, drag to explore other lines";
 }
 
 function backToOverview() {
@@ -2482,7 +2634,7 @@ function backToOverview() {
   document.getElementById("back-btn").classList.add("hidden");
   document.getElementById("detail-panel").classList.add("hidden");
   syncSheetBackdrop(false);
-  document.getElementById("subtitle").textContent = "Tap a line to explore its modalities";
+  document.getElementById("subtitle").textContent = "Tap an area to explore its modalities";
 }
 
 function backToStationList() {
@@ -2650,7 +2802,16 @@ function renderDetailPanel() {
   }
 
   var mod = state.data.modalities.filter(function (m) { return m.id === state.selectedStation; })[0];
-  var area = state.data.areas.filter(function (a) { return a.id === state.selectedArea; })[0];
+  // Wheel mode (see buildWheelMap) lets a station be tapped straight from
+  // the unfaded overview, with no line ever selected first - so
+  // state.selectedArea can be null here (unlike the metro map, where a
+  // station only becomes clickable after selectArea() already ran). Fall
+  // back to the modality's own primary area so the breadcrumb still has
+  // something to show, without touching state.selectedArea itself (that
+  // would trigger applyFocusState's line-focus fade, hiding the wheel's
+  // other spokes - not what a plain station tap should do).
+  var area = state.data.areas.filter(function (a) { return a.id === state.selectedArea; })[0]
+    || state.data.areas.filter(function (a) { return a.id === mod.areas[0]; })[0];
   panel.classList.remove("hidden");
   syncSheetBackdrop(true);
 
