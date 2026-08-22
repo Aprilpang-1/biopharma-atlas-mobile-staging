@@ -1754,7 +1754,6 @@ var barrelLoopEls = [];   // [strandIdx] -> {top: <path>, bot: <path>}
 var barrelBadgeEls = [];  // [strandIdx] -> {circle, text}
 var barrelStationEls = {}; // modId -> {dot, labels: [{el, lineIndex}], areaIdx, t}
 
-var barrelPointerState = null; // {x, startRotation, moved}
 var barrelDragSuppressClick = false;
 var barrelRedrawScheduled = false;
 var barrelRotateRAF = null;
@@ -2025,43 +2024,155 @@ function scheduleBarrelRedraw() {
   });
 }
 
-// Touch/mouse drag-to-rotate. Uses pointer events (covers both touch and
-// mouse in one listener) on document for move/up so a drag that slides off
-// the svg's edges - very easy on a small phone screen - still tracks
-// correctly instead of stopping dead at the boundary. Re-attaching on every
-// buildWheelMap call removes the previous handlers first so rebuilds (e.g.
-// a resize crossing the mobile breakpoint) don't stack duplicate listeners.
+// 2026-08-22: April found the initial one-finger-drag-to-rotate barrel
+// worked, then asked for a selected (lit-up) line to also be pinch-zoomable.
+// One-finger drag still rotates the barrel exactly as before; a second
+// finger touching down switches the gesture to a pinch-zoom of the SVG
+// viewBox instead - same anchor-under-your-fingers technique
+// setupMapPanning's touch pinch-zoom uses for the desktop metro map (see
+// above), reimplemented on pointer events here (rather than that
+// function's separate touchstart/touchmove listeners) so rotate vs. pinch
+// can be arbitrated from a single live pointer count. Always available,
+// not gated to only-after-selection - the two gestures don't conflict
+// (rotate needs exactly one contact point, pinch needs two), so there's no
+// reason to withhold zoom on the unselected overview.
+var BARREL_MIN_ZOOM_FRACTION = 0.32; // deepest pinch-zoom on the barrel -
+// close enough to read a strand's station labels clearly without losing
+// the barrel's curve entirely.
+var barrelActivePointers = {}; // pointerId -> {x, y}
+var barrelGesture = null;      // {mode:'rotate', ...} | {mode:'pinch', ...}
+
+function barrelClampViewBox(vb) {
+  var full = fullViewBoxArray();
+  var w = vb[2], h = vb[3];
+  var maxX = Math.max(full[0], full[0] + full[2] - w);
+  var maxY = Math.max(full[1], full[1] + full[3] - h);
+  var x = Math.min(Math.max(vb[0], full[0]), maxX);
+  var y = Math.min(Math.max(vb[1], full[1]), maxY);
+  return [x, y, w, h];
+}
+
+// Touch/mouse drag-to-rotate + two-finger pinch-to-zoom. Uses pointer
+// events (covers touch and mouse in one listener) on document for move/up
+// so a gesture that slides off the svg's edges - very easy on a small
+// phone screen - still tracks correctly instead of stopping dead at the
+// boundary. Re-attaching on every buildWheelMap call removes the previous
+// handlers first so rebuilds (e.g. a resize crossing the mobile breakpoint)
+// don't stack duplicate listeners.
 function setupBarrelDrag(svg) {
   if (barrelPointerMoveHandler) document.removeEventListener("pointermove", barrelPointerMoveHandler);
   if (barrelPointerUpHandler) {
     document.removeEventListener("pointerup", barrelPointerUpHandler);
     document.removeEventListener("pointercancel", barrelPointerUpHandler);
   }
+  barrelActivePointers = {};
+  barrelGesture = null;
+
+  function activeIds() { return Object.keys(barrelActivePointers); }
+  function dist(idA, idB) {
+    var a = barrelActivePointers[idA], b = barrelActivePointers[idB];
+    return Math.hypot(b.x - a.x, b.y - a.y);
+  }
+  function mid(idA, idB) {
+    var a = barrelActivePointers[idA], b = barrelActivePointers[idB];
+    return { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+  }
+
+  function startRotateGesture(id) {
+    barrelGesture = {
+      mode: "rotate", id: id,
+      x: barrelActivePointers[id].x,
+      startRotation: state.barrelRotation || 0,
+      moved: false
+    };
+  }
+
+  function startPinchGesture(idA, idB) {
+    var rect = svg.getBoundingClientRect();
+    var startVb = svg.getAttribute("viewBox").split(" ").map(parseFloat);
+    var m = mid(idA, idB);
+    var scaleX = startVb[2] / (rect.width || 1);
+    var scaleY = startVb[3] / (rect.height || 1);
+    barrelGesture = {
+      mode: "pinch", ids: [idA, idB],
+      startDist: dist(idA, idB),
+      startViewBox: startVb,
+      anchorX: startVb[0] + (m.x - rect.left) * scaleX,
+      anchorY: startVb[1] + (m.y - rect.top) * scaleY,
+      moved: false
+    };
+    svg.classList.add("panning");
+  }
 
   svg.addEventListener("pointerdown", function (e) {
+    barrelActivePointers[e.pointerId] = { x: e.clientX, y: e.clientY };
     if (barrelRotateRAF) { cancelAnimationFrame(barrelRotateRAF); barrelRotateRAF = null; }
-    barrelPointerState = { x: e.clientX, startRotation: state.barrelRotation || 0, moved: false };
+    var ids = activeIds();
+    if (ids.length === 1) {
+      startRotateGesture(ids[0]);
+    } else if (ids.length === 2) {
+      startPinchGesture(ids[0], ids[1]);
+    }
+    // 3rd+ simultaneous contact point: ignore, keep whatever gesture (the
+    // pinch) is already tracking its original two pointers.
   });
 
   barrelPointerMoveHandler = function (e) {
-    if (!barrelPointerState) return;
-    var dx = e.clientX - barrelPointerState.x;
-    if (Math.abs(dx) > 4) barrelPointerState.moved = true;
-    if (!barrelPointerState.moved) return;
-    e.preventDefault();
-    state.barrelRotation = barrelPointerState.startRotation + dx * BARREL_ROTATE_SENSITIVITY;
-    scheduleBarrelRedraw();
+    if (!(e.pointerId in barrelActivePointers)) return;
+    barrelActivePointers[e.pointerId] = { x: e.clientX, y: e.clientY };
+    if (!barrelGesture) return;
+
+    if (barrelGesture.mode === "rotate") {
+      // barrelGesture.id came from Object.keys(barrelActivePointers), which
+      // always stringifies numeric pointerIds - compare as strings so a
+      // real (numeric) e.pointerId still matches.
+      if (String(e.pointerId) !== String(barrelGesture.id)) return;
+      var dx = e.clientX - barrelGesture.x;
+      if (Math.abs(dx) > 4) barrelGesture.moved = true;
+      if (!barrelGesture.moved) return;
+      e.preventDefault();
+      state.barrelRotation = barrelGesture.startRotation + dx * BARREL_ROTATE_SENSITIVITY;
+      scheduleBarrelRedraw();
+    } else if (barrelGesture.mode === "pinch") {
+      e.preventDefault();
+      barrelGesture.moved = true;
+      var full = fullViewBoxArray();
+      var minScale = (full[2] * BARREL_MIN_ZOOM_FRACTION) / barrelGesture.startViewBox[2];
+      var maxScale = full[2] / barrelGesture.startViewBox[2];
+      var curDist = dist(barrelGesture.ids[0], barrelGesture.ids[1]);
+      var rawScale = barrelGesture.startDist / Math.max(curDist, 1);
+      var scale = Math.min(maxScale, Math.max(minScale, rawScale));
+      var newW = barrelGesture.startViewBox[2] * scale;
+      var newH = barrelGesture.startViewBox[3] * scale;
+
+      var m = mid(barrelGesture.ids[0], barrelGesture.ids[1]);
+      var rect = svg.getBoundingClientRect();
+      if (!rect.width || !rect.height) return;
+      var newX = barrelGesture.anchorX - (m.x - rect.left) * (newW / rect.width);
+      var newY = barrelGesture.anchorY - (m.y - rect.top) * (newH / rect.height);
+      var next = barrelClampViewBox([newX, newY, newW, newH]);
+      svg.setAttribute("viewBox", next.join(" "));
+    }
   };
-  // A drag that moved past the threshold shouldn't also fire the badge/dot/
-  // strand click that lands under the finger on release - barrelDragSuppressClick
-  // is checked at the top of every barrel click handler above and cleared
-  // on the next tick (after the browser's own click event, if any, fires).
-  barrelPointerUpHandler = function () {
-    if (barrelPointerState && barrelPointerState.moved) {
+
+  // A gesture that moved past its threshold shouldn't also fire the badge/
+  // dot/strand click that lands under a finger on release -
+  // barrelDragSuppressClick is checked at the top of every barrel click
+  // handler above and cleared on the next tick (after the browser's own
+  // click event, if any, fires).
+  barrelPointerUpHandler = function (e) {
+    delete barrelActivePointers[e.pointerId];
+    if (barrelGesture && barrelGesture.moved) {
       barrelDragSuppressClick = true;
       setTimeout(function () { barrelDragSuppressClick = false; }, 0);
     }
-    barrelPointerState = null;
+    svg.classList.remove("panning");
+    // Finger count changed mid-gesture (a pinch dropped to one finger, or
+    // the rotating finger lifted) - simplest and most reliable is to just
+    // end the current gesture, same approach setupMapPanning's own touch
+    // pinch-zoom takes, rather than try to seamlessly hand off between
+    // rotate and pinch mid-motion.
+    barrelGesture = null;
   };
   document.addEventListener("pointermove", barrelPointerMoveHandler, { passive: false });
   document.addEventListener("pointerup", barrelPointerUpHandler);
