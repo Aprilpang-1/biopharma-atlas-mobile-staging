@@ -1185,12 +1185,25 @@ header h1 {
     display: flex;
   }
 
+  /* 2026-08-22: April asked for the "PharmaWheel" title to move to the
+     bottom of the screen - it was floating at the top and covering the
+     barrel's top-of-strand badges. Now floats over the bottom instead
+     (same pill styling, just anchored to `bottom` instead of `top`);
+     #toolbar (back/compare buttons - navigation controls she wants within
+     easy thumb reach) takes over the top spot header used to occupy. See
+     fitMapToContainer's wheel branch (app.js) for the matching reserved-
+     clearance swap - topSafe now measures #toolbar, bottomSafe measures
+     this element. */
   header {
     position: fixed;
-    top: calc(0.75rem + env(safe-area-inset-top, 0px));
+    bottom: calc(0.75rem + env(safe-area-inset-bottom, 0px));
     left: 50%;
     transform: translateX(-50%);
-    z-index: 45;
+    /* Lower than #sheet-backdrop (39) and #detail-panel (40) - both now
+       share the bottom edge of the screen with this title pill, and the
+       sliding-up detail sheet should visually cover the title rather than
+       float awkwardly on top of the sheet's own content. */
+    z-index: 37;
     margin: 0;
     max-width: calc(100vw - 2rem);
     padding: 0.55rem 1.15rem;
@@ -1216,7 +1229,7 @@ header h1 {
 
   #toolbar {
     position: fixed;
-    top: calc(4.1rem + env(safe-area-inset-top, 0px));
+    top: calc(0.75rem + env(safe-area-inset-top, 0px));
     left: 50%;
     transform: translateX(-50%);
     z-index: 45;

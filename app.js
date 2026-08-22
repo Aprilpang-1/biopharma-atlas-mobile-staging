@@ -898,20 +898,32 @@ function fitMapToContainer(app) {
   // page already does.
   if (isWheelMode()) {
     // 2026-08-20: was a flat 70px guess, which April found too short - the
-    // floating header pill (safe-area inset + padding + h1 + two-line
-    // subtitle) actually runs taller than that on her phone, so its bottom
-    // edge overlapped the ON spoke. Measuring the real header element's
-    // rendered bottom edge instead of guessing a pixel value makes this
-    // correct regardless of device notch size or how many lines the
-    // subtitle wraps to.
+    // floating chrome pill (safe-area inset + padding + its content) runs
+    // taller than that on her phone. Measuring the real element's rendered
+    // edge instead of guessing a pixel value makes this correct regardless
+    // of device notch size or how many lines any wrapped text takes.
+    //
+    // 2026-08-22: April moved the "PharmaWheel" title (the <header>
+    // element) down to float over the BOTTOM of the barrel instead of the
+    // top, so badges at the top of a strand stop getting covered by it -
+    // #toolbar (back/compare buttons) is the thing floating at top now.
+    // This reserves clearance on BOTH edges: topSafe from #toolbar's real
+    // bottom edge, bottomSafe from header's real top edge, so the barrel
+    // never renders under either floating pill.
+    var toolbarEl = document.getElementById("toolbar");
     var headerEl = document.querySelector("header");
+    var appRect = app.getBoundingClientRect();
     var topSafe = 70;
-    if (headerEl) {
-      var headerBottom = headerEl.getBoundingClientRect().bottom;
-      var appTop = app.getBoundingClientRect().top;
-      topSafe = Math.max(headerBottom - appTop, 0) + 24;
+    if (toolbarEl) {
+      var toolbarBottom = toolbarEl.getBoundingClientRect().bottom;
+      topSafe = Math.max(toolbarBottom - appRect.top, 0) + 24;
     }
-    var usableH = Math.max(ch - topSafe, 100);
+    var bottomSafe = 70;
+    if (headerEl) {
+      var headerTop = headerEl.getBoundingClientRect().top;
+      bottomSafe = Math.max(appRect.bottom - headerTop, 0) + 24;
+    }
+    var usableH = Math.max(ch - topSafe - bottomSafe, 100);
     var wScale = Math.min(cw / vbW, usableH / vbH);
     var wW = vbW * wScale, wH = vbH * wScale;
     svg.setAttribute("preserveAspectRatio", "xMidYMid meet");
@@ -1876,14 +1888,16 @@ function buildWheelMap(app) {
     });
   });
 
-  // Area badges - only actually visible once their strand has rotated far
-  // enough to face the viewer (see renderBarrelFrame's depth gate); this IS
-  // the mechanism behind April's "the further end line can be clickable
-  // [once rotated into view]" request.
+  // Area badges - one at EACH end of every strand (April: "I want the badge
+  // to be both at the top and bottom of each sheet"), each only actually
+  // visible once that end of the strand has rotated far enough to face the
+  // viewer (see renderBarrelFrame's depth gate) - this IS the mechanism
+  // behind April's earlier "the further end line can be clickable [once
+  // rotated into view]" request, now applied independently to both ends.
   var badgesG = svgEl("g", { id: "barrel-badges" });
   mapContent.appendChild(badgesG);
   barrelBadgeEls = [];
-  areas.forEach(function (area) {
+  function makeBadge(area) {
     var badge = svgEl("circle", {
       cx: barrelCx, cy: BARREL_TOP_Y, r: 16, fill: area.color,
       class: "area-badge", "data-area": area.id
@@ -1903,7 +1917,10 @@ function buildWheelMap(app) {
       selectArea(area.id);
     });
     badgesG.appendChild(badgeText);
-    barrelBadgeEls.push({ circle: badge, text: badgeText });
+    return { circle: badge, text: badgeText };
+  }
+  areas.forEach(function (area) {
+    barrelBadgeEls.push({ top: makeBadge(area), bot: makeBadge(area) });
   });
 
   app.innerHTML = "";
@@ -1978,20 +1995,30 @@ function renderBarrelFrame() {
   allSegs.sort(function (a, b) { return a.depth - b.depth; });
   allSegs.forEach(function (seg) { barrelStripesG.appendChild(seg.el); });
 
+  // 2026-08-22: April wants the area badge (e.g. "ON", "IM") at BOTH ends
+  // of each strand, not just one - each end gated by its own depth (a
+  // strand can face the viewer at its top while its bottom is still
+  // twisted away, or vice versa, since twist means the two ends don't
+  // necessarily rotate in lockstep).
+  function positionBarrelBadge(badge, pt, rgb) {
+    var visible = pt.depth > BARREL_BADGE_VISIBLE_DEPTH;
+    badge.circle.classList.toggle("barrel-badge-hidden", !visible);
+    badge.text.classList.toggle("barrel-badge-hidden", !visible);
+    if (!visible) return;
+    var by = pt.y + (pt.end === "top" ? -78 : 78);
+    badge.circle.setAttribute("cx", pt.x); badge.circle.setAttribute("cy", by);
+    badge.text.setAttribute("x", pt.x); badge.text.setAttribute("y", by);
+    badge.circle.setAttribute("fill", barrelShade(rgb, pt.depth));
+  }
   areas.forEach(function (area, i) {
     var sp = barrelStrandParams[i];
-    var top0 = barrelStrandPoint(sp, 0, rotation, barrelCx);
     var rgb = hexToRgbArr(area.color);
+    var top0 = barrelStrandPoint(sp, 0, rotation, barrelCx);
+    var bot0 = barrelStrandPoint(sp, 1, rotation, barrelCx);
+    top0.end = "top"; bot0.end = "bot";
     var b = barrelBadgeEls[i];
-    var visible = top0.depth > BARREL_BADGE_VISIBLE_DEPTH;
-    b.circle.classList.toggle("barrel-badge-hidden", !visible);
-    b.text.classList.toggle("barrel-badge-hidden", !visible);
-    if (visible) {
-      var by = top0.y - 78;
-      b.circle.setAttribute("cx", top0.x); b.circle.setAttribute("cy", by);
-      b.text.setAttribute("x", top0.x); b.text.setAttribute("y", by);
-      b.circle.setAttribute("fill", barrelShade(rgb, top0.depth));
-    }
+    positionBarrelBadge(b.top, top0, rgb);
+    positionBarrelBadge(b.bot, bot0, rgb);
   });
 
   Object.keys(barrelStationEls).forEach(function (modId) {
