@@ -736,7 +736,11 @@ var state = {
   selectedStation: null,
   detailView: null,
   pinned: [],
-  comparing: false
+  comparing: false,
+  // Current rotation (degrees) of the mobile beta-barrel visual - persists
+  // across selections/rebuilds so rotating, then tapping a station, doesn't
+  // snap the barrel back to its start position. Unused outside wheel mode.
+  barrelRotation: 10
 };
 
 function isPinned(modId) {
@@ -893,7 +897,20 @@ function fitMapToContainer(app) {
   // header pill, same as every other floating-chrome element on this
   // page already does.
   if (isWheelMode()) {
+    // 2026-08-20: was a flat 70px guess, which April found too short - the
+    // floating header pill (safe-area inset + padding + h1 + two-line
+    // subtitle) actually runs taller than that on her phone, so its bottom
+    // edge overlapped the ON spoke. Measuring the real header element's
+    // rendered bottom edge instead of guessing a pixel value makes this
+    // correct regardless of device notch size or how many lines the
+    // subtitle wraps to.
+    var headerEl = document.querySelector("header");
     var topSafe = 70;
+    if (headerEl) {
+      var headerBottom = headerEl.getBoundingClientRect().bottom;
+      var appTop = app.getBoundingClientRect().top;
+      topSafe = Math.max(headerBottom - appTop, 0) + 24;
+    }
     var usableH = Math.max(ch - topSafe, 100);
     var wScale = Math.min(cw / vbW, usableH / vbH);
     var wW = vbW * wScale, wH = vbH * wScale;
@@ -1566,38 +1583,43 @@ function buildCityBackground(svg, vbParts) {
   svg.appendChild(g);
 }
 
-// ---- Radial wheel (mobile) ----
+// ---- Radial wheel -> rotatable beta-barrel (mobile) ----
 // 2026-08-13: replaces the metro-line rendering for mobile widths, per
 // April's call to move away from a tall vertical strip that couldn't fit
-// a phone screen without either cropping or big side margins. Unlike
-// MOBILE_LAYOUT above (a hand-authored coordinate table that needed
-// manual re-plotting every time a station was added - see the many
-// "extend line layout" tasks in this file's history), this geometry is
-// fully COMPUTED from state.data at build time: areas become spokes
-// radiating from a central hub, modalities become dots along their own
-// spoke. A new area or modality in content.json places itself on the
-// wheel automatically, no coordinate work required.
+// a phone screen without either cropping or big side margins. Areas become
+// strands computed from state.data at build time - a new area or modality
+// in content.json places itself automatically, no coordinate work needed.
 //
-// Deliberately reuses the exact classes/data-attributes the metro code
-// already wires up - .line-path[data-area], .area-badge[data-area],
-// .station-dot[data-station], clicks calling the same selectArea()/
-// selectStation() - so every existing interaction (applyFocusState's
-// fade-on-select, the detail bottom sheet, pin-to-compare) keeps working
-// completely unchanged; this file only adds the drawing code, not new
-// interaction logic. Panning/zooming (setupMapPanning,
-// computeLineZoomViewBox) is skipped on purpose - a wheel this size is
-// meant to be seen whole, not cropped and panned.
+// 2026-08-21: the flat radial-spoke wheel (v1) was replaced with a 3D-style
+// rotatable beta-barrel per April's explicit redesign request - each area
+// is now a ribbon-like strand arranged around a cylinder, with organic
+// per-strand jitter (twist/bulge/loop-length) and depth-based shading/
+// occlusion, approved after ~24 mockup iterations (see /tmp/barrel3d in
+// that session) and calibrated to real GFP proportions (42x24 A, RCSB/
+// PDB-101 - height:diameter ~= 1.75:1). See buildWheelMap/renderBarrelFrame
+// below for the geometry; isWheelMode() below still gates mobile-only
+// behavior exactly as it did for the flat wheel, so the name is kept even
+// though the visual is no longer a flat wheel.
+//
+// Deliberately still reuses the exact classes/data-attributes the metro
+// code already wires up - .area-badge[data-area], .station-dot
+// [data-station], clicks calling the same selectArea()/selectStation() -
+// so every existing interaction (applyFocusState's fade-on-select, the
+// detail bottom sheet, pin-to-compare) keeps working unchanged. The one
+// addition: applyFocusState() now also calls scheduleBarrelRedraw() in
+// wheel mode, since the barrel's strand colors are computed per-depth in
+// JS on every frame and can't be expressed as static CSS the way the flat
+// wheel's line-path stroke colors were. Free-form panning
+// (setupMapPanning) is still skipped - the barrel is rotated via its own
+// drag handling (setupBarrelDrag) instead. Tapping an area badge/strand/
+// station now rotates that strand to face the viewer (rotateBarrelToFront)
+// instead of the flat wheel's viewBox zoom-to-spoke.
 //
 // v1 per April's explicit "we'll revise from here": shared/interchange
 // modalities (e.g. ADC, spanning Immunology + Oncology) are drawn once on
-// their primary area's spoke with no visual distinction yet beyond the
-// existing .interchange-dot style, and the hub gets crowded where many
-// low-index shared stations cluster - both flagged already as the next
-// round of polish, not attempted here.
-var WHEEL_HUB_R = 30;
-var WHEEL_GAP = 45;
-var WHEEL_BADGE_MARGIN = 40;
-
+// their primary area's strand with no visual distinction yet beyond the
+// existing .interchange-dot style - flagged already as the next round of
+// polish, not attempted here.
 function isWheelMode() {
   return LAYOUT === MOBILE_LAYOUT;
 }
@@ -1618,105 +1640,471 @@ function wheelPolar(cx, cy, angleDeg, r) {
   return { x: cx + r * Math.cos(rad), y: cy + r * Math.sin(rad) };
 }
 
+// ---- Beta-barrel geometry (v24 mockup, approved 2026-08-21) ----
+// Ported from the /tmp/barrel3d Python prototype April iterated on. A
+// strand's screen x/depth comes from projecting a point rotating around a
+// cylinder (x = cx + r*sin(ang), depth = cos(ang): 1 = facing the viewer,
+// -1 = facing away); apparent ribbon width scales with abs(depth) (a
+// strand reads full-width face-on, edge-on when depth=0) - see
+// barrelStrandPoint/renderBarrelFrame below.
+var BARREL_W = 900, BARREL_H = 980;
+var BARREL_TOP_Y = 210, BARREL_BOT_Y = 790;
+var BARREL_RADIUS = 150;        // GFP-accurate: 42x24 A -> ~1.75:1 height:diameter
+var BARREL_BULGE = 0.10;        // GFP reads as almost a straight cylinder
+var BARREL_RIM_RY = 30;
+var BARREL_MAX_W = 46;
+var BARREL_MIN_W = 6;
+var BARREL_SEGMENTS = 18;       // 60 in the Python mockup; trimmed for mobile perf
+var BARREL_BADGE_VISIBLE_DEPTH = -0.05;
+var BARREL_GRAY_FRONT = "rgb(152,152,152)";
+var BARREL_GRAY_BACK = "rgb(116,116,116)";
+var BARREL_ROTATE_SENSITIVITY = 0.4; // degrees rotated per px dragged
+
+// Deterministic PRNG so every strand gets the same organic per-strand
+// jitter (twist, bulge, loop reach...) on every rebuild without persisting
+// extra state. JS has no seedable Math.random and bit-exact match with the
+// Python mockup's random.seed(11) isn't the goal - just a stable,
+// visually-equivalent mix across the 10 strands.
+function mulberry32(seed) {
+  return function () {
+    seed |= 0; seed = (seed + 0x6D2B79F5) | 0;
+    var t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+function barrelRand(rng, lo, hi) { return lo + rng() * (hi - lo); }
+
+function buildBarrelStrandParams(areas) {
+  var rng = mulberry32(11);
+  var n = areas.length;
+  var params = [];
+  var acc = 0;
+  for (var i = 0; i < n; i++) {
+    var spacingJitter = barrelRand(rng, -6, 6);
+    acc += (360 / n) + spacingJitter / n;
+    params.push({
+      base_angle: acc,
+      twist: barrelRand(rng, 78, 122),
+      radius_mult: barrelRand(rng, 0.92, 1.07),
+      top_t_offset: barrelRand(rng, -0.04, 0.08),
+      bot_t_offset: barrelRand(rng, -0.07, 0.05),
+      bulge_phase: barrelRand(rng, -0.08, 0.08),
+      bulge_amt: barrelRand(rng, 0.85, 1.2),
+      top_flare: barrelRand(rng, 0.8, 1.6),
+      bot_flare: barrelRand(rng, 0.8, 1.6),
+      top_loop_len: barrelRand(rng, 0.9, 3.2),
+      bot_loop_len: barrelRand(rng, 0.9, 3.2)
+    });
+  }
+  var offset0 = params[0].base_angle;
+  params.forEach(function (p) { p.base_angle = p.base_angle - offset0 - 90; });
+  return params;
+}
+
+function barrelRadiusProfile(t) {
+  // 0 at the ends, 1 at the middle - clamp t and the sine before the
+  // fractional power (a small negative float ** 0.85 is complex/NaN).
+  var tt = Math.max(0, Math.min(1, t));
+  var s = Math.max(0, Math.sin(Math.PI * tt));
+  return 1 + BARREL_BULGE * Math.pow(s, 0.85);
+}
+
+// x/y/depth of point t (0 = top end, 1 = bottom end) along strand sp, at
+// the barrel's current rotation.
+function barrelStrandPoint(sp, t, rotationDeg, cx) {
+  var tEff = sp.top_t_offset + t * (1 - sp.top_t_offset + sp.bot_t_offset);
+  var angDeg = sp.base_angle + rotationDeg + sp.twist * tEff;
+  var ang = (angDeg * Math.PI) / 180;
+  var prof = barrelRadiusProfile(t + sp.bulge_phase);
+  prof = 1 + (prof - 1) * sp.bulge_amt;
+  var r = BARREL_RADIUS * sp.radius_mult * prof;
+  return {
+    x: cx + r * Math.sin(ang),
+    y: BARREL_TOP_Y + (BARREL_BOT_Y - BARREL_TOP_Y) * t,
+    depth: Math.cos(ang)
+  };
+}
+
+function hexToRgbArr(hex) {
+  hex = hex.replace("#", "");
+  return [parseInt(hex.slice(0, 2), 16), parseInt(hex.slice(2, 4), 16), parseInt(hex.slice(4, 6), 16)];
+}
+
+function barrelShade(rgb, depth) {
+  var out;
+  if (depth >= 0) {
+    out = rgb.map(function (c) { return Math.round(c + (255 - c) * (0.28 * depth)); });
+  } else {
+    out = rgb.map(function (c) { return Math.round(c * (1 - 0.55 * -depth)); });
+  }
+  return "rgb(" + out[0] + "," + out[1] + "," + out[2] + ")";
+}
+
+// Live element pools + rotation state for the currently-built barrel, so
+// renderBarrelFrame() can update (not recreate) elements on every drag
+// frame - rebuilding ~200 DOM nodes per pointermove would be far too slow
+// for a continuous touch gesture.
+var barrelAreas = null;
+var barrelStrandParams = null;
+var barrelCx = BARREL_W / 2;
+var barrelStripesG = null;
+var barrelSegEls = [];    // [strandIdx][segIdx] -> <polygon>
+var barrelLoopEls = [];   // [strandIdx] -> {top: <path>, bot: <path>}
+var barrelBadgeEls = [];  // [strandIdx] -> {circle, text}
+var barrelStationEls = {}; // modId -> {dot, labels: [{el, lineIndex}], areaIdx, t}
+
+var barrelPointerState = null; // {x, startRotation, moved}
+var barrelDragSuppressClick = false;
+var barrelRedrawScheduled = false;
+var barrelRotateRAF = null;
+var barrelPointerMoveHandler = null;
+var barrelPointerUpHandler = null;
+
 function buildWheelMap(app) {
   var areas = state.data.areas;
   var perArea = wheelPerArea();
-  var maxCount = 0;
-  areas.forEach(function (a) {
-    maxCount = Math.max(maxCount, perArea[a.id].length);
-  });
-  var n = areas.length;
-  var angleStep = 360 / n;
-  var startAngle = -90;
-  var spokeAngle = {};
-  areas.forEach(function (a, i) {
-    spokeAngle[a.id] = startAngle + i * angleStep;
-  });
-  var maxR = WHEEL_HUB_R + maxCount * WHEEL_GAP;
-  var half = maxR + WHEEL_BADGE_MARGIN;
-  var size = half * 2;
-  var cx = half, cy = half;
+  barrelAreas = areas;
+  barrelStrandParams = buildBarrelStrandParams(areas);
+  barrelCx = BARREL_W / 2;
 
   // MOBILE_LAYOUT.viewBox is read all over this file (fitMapToContainer,
-  // fullViewBoxArray, computeLineZoomViewBox) - mutating this one property
-  // (const only locks the variable binding, not the object's contents)
-  // keeps all of those working against the wheel's actual computed size
-  // with zero further changes.
-  MOBILE_LAYOUT.viewBox = "0 0 " + size + " " + size;
+  // fullViewBoxArray) - mutating this one property (const only locks the
+  // variable binding, not the object's contents) keeps all of those working
+  // against the barrel's fixed canvas with zero further changes. Unlike the
+  // old wheel, the barrel's canvas size doesn't depend on station counts -
+  // stations sit along each strand's body, not out past its end.
+  MOBILE_LAYOUT.viewBox = "0 0 " + BARREL_W + " " + BARREL_H;
 
   var svg = svgEl("svg", { id: "subway-map", viewBox: MOBILE_LAYOUT.viewBox });
   var mapContent = svgEl("g", { id: "map-content" });
   svg.appendChild(mapContent);
 
-  areas.forEach(function (area) {
-    var ang = spokeAngle[area.id];
-    var outerR = WHEEL_HUB_R + perArea[area.id].length * WHEEL_GAP;
-    var p0 = wheelPolar(cx, cy, ang, WHEEL_HUB_R);
-    var p1 = wheelPolar(cx, cy, ang, outerR);
-    var line = svgEl("path", {
-      d: "M" + p0.x + " " + p0.y + " L" + p1.x + " " + p1.y,
-      class: "line-path",
-      stroke: area.color,
-      fill: "none",
-      "data-area": area.id
+  // Decorative cask-outline rims (top/mid/bottom) - purely cosmetic, suggest
+  // the 3D silhouette the way the Python mockup's guide ellipses did.
+  var rimsG = svgEl("g", { id: "barrel-rims" });
+  mapContent.appendChild(rimsG);
+  [BARREL_TOP_Y, (BARREL_TOP_Y + BARREL_BOT_Y) / 2, BARREL_BOT_Y].forEach(function (ry) {
+    rimsG.appendChild(svgEl("ellipse", {
+      cx: barrelCx, cy: ry, rx: BARREL_RADIUS, ry: BARREL_RIM_RY * 0.5,
+      fill: "none", stroke: "#ccc", "stroke-width": 1.4, "pointer-events": "none"
+    }));
+  });
+
+  // Strand ribbon segments + loop ends: a fixed pool of polygons/paths per
+  // strand. renderBarrelFrame() depth-sorts and re-appends these (moving,
+  // not cloning, existing nodes) every frame for correct painter's-
+  // algorithm occlusion as strands cross each other while rotating.
+  barrelStripesG = svgEl("g", { id: "barrel-strands" });
+  mapContent.appendChild(barrelStripesG);
+  barrelSegEls = [];
+  barrelLoopEls = [];
+  areas.forEach(function (area, i) {
+    var segRow = [];
+    for (var s = 0; s < BARREL_SEGMENTS; s++) {
+      var poly = svgEl("polygon", { points: "0,0 0,0 0,0 0,0", "data-area": area.id });
+      poly.addEventListener("click", function () {
+        if (barrelDragSuppressClick) return;
+        selectArea(area.id);
+      });
+      barrelStripesG.appendChild(poly);
+      segRow.push(poly);
+    }
+    barrelSegEls.push(segRow);
+
+    // Loops rendered as a single stroked bezier path per end (round
+    // linecap) rather than the Python mockup's chain of overlapping
+    // circles - tube_r is constant along one loop's short reach (depth
+    // barely varies), so a stroked path gives the identical "solid rounded
+    // coil" look with one DOM node instead of ~25.
+    var loops = {};
+    ["top", "bot"].forEach(function (which) {
+      var loopEl = svgEl("path", { d: "M0 0", fill: "none", "stroke-linecap": "round", "data-area": area.id });
+      loopEl.addEventListener("click", function () {
+        if (barrelDragSuppressClick) return;
+        selectArea(area.id);
+      });
+      barrelStripesG.appendChild(loopEl);
+      loops[which] = loopEl;
     });
-    line.addEventListener("click", function () { selectArea(area.id); });
-    mapContent.appendChild(line);
+    barrelLoopEls.push(loops);
   });
 
-  var hub = svgEl("circle", {
-    cx: cx, cy: cy, r: WHEEL_HUB_R * 0.6, class: "wheel-hub"
-  });
-  mapContent.appendChild(hub);
-  var hubText = svgEl("text", { x: cx, y: cy, class: "wheel-hub-text" });
-  hubText.textContent = "Rx";
-  mapContent.appendChild(hubText);
-
-  areas.forEach(function (area) {
-    perArea[area.id].forEach(function (mod, idx) {
-      // Shared modalities are drawn once, on their primary (first-listed)
-      // area only - a tap from any other area it belongs to still finds
-      // this same element via data-station (applyFocusState/selectStation
-      // look it up by id, not by which spoke it's drawn on).
-      if (mod.areas[0] !== area.id) return;
-      var ang = spokeAngle[area.id];
-      var r = WHEEL_HUB_R + (idx + 1) * WHEEL_GAP;
-      var p = wheelPolar(cx, cy, ang, r);
+  // Station dots + labels - same data-station/data-station-label
+  // attributes and hidden-station/selected classes the metro map already
+  // uses, so applyFocusState's existing highlight/fade logic needs zero
+  // changes to keep driving them here.
+  var stationsG = svgEl("g", { id: "barrel-stations" });
+  mapContent.appendChild(stationsG);
+  barrelStationEls = {};
+  areas.forEach(function (area, areaIdx) {
+    var list = perArea[area.id].filter(function (mod) { return mod.areas[0] === area.id; });
+    var count = list.length;
+    list.forEach(function (mod, idx) {
+      // Spread stations along the strand's body (t 0.16-0.84), clear of
+      // both loop ends, evenly by index - the barrel's analog of the flat
+      // wheel's outward per-index radius spacing.
+      var t = count > 0 ? 0.16 + (0.68 * (idx + 1)) / (count + 1) : 0.5;
       var isInterchange = mod.areas.length > 1;
       var dot = svgEl("circle", {
-        cx: p.x, cy: p.y,
-        class: "station-dot" + (isInterchange ? " interchange-dot" : ""),
+        cx: barrelCx, cy: BARREL_TOP_Y, r: isInterchange ? 13 : 10,
+        class: "station-dot hidden-station" + (isInterchange ? " interchange-dot" : ""),
         fill: isInterchange ? "#fff" : area.color,
         stroke: "#111",
         "stroke-width": isInterchange ? 4 : 1.5,
         "data-station": mod.id
       });
-      dot.addEventListener("click", function () { selectStation(mod.id); });
-      mapContent.appendChild(dot);
+      dot.addEventListener("click", function () {
+        if (barrelDragSuppressClick) return;
+        selectStation(mod.id);
+      });
+      stationsG.appendChild(dot);
+
+      var lines = wrapLabel(mod.name);
+      var midIndex = (lines.length - 1) / 2;
+      var labelEls = lines.map(function (lineText, i) {
+        var label = svgEl("text", {
+          x: barrelCx, y: BARREL_TOP_Y,
+          class: "station-label hidden-station",
+          "data-station-label": mod.id
+        });
+        label.textContent = lineText;
+        stationsG.appendChild(label);
+        return { el: label, lineIndex: i - midIndex };
+      });
+
+      barrelStationEls[mod.id] = { dot: dot, labels: labelEls, areaIdx: areaIdx, t: t };
     });
   });
 
+  // Area badges - only actually visible once their strand has rotated far
+  // enough to face the viewer (see renderBarrelFrame's depth gate); this IS
+  // the mechanism behind April's "the further end line can be clickable
+  // [once rotated into view]" request.
+  var badgesG = svgEl("g", { id: "barrel-badges" });
+  mapContent.appendChild(badgesG);
+  barrelBadgeEls = [];
   areas.forEach(function (area) {
-    var ang = spokeAngle[area.id];
-    var outerR = WHEEL_HUB_R + perArea[area.id].length * WHEEL_GAP + 28;
-    var p = wheelPolar(cx, cy, ang, outerR);
     var badge = svgEl("circle", {
-      cx: p.x, cy: p.y, r: 16, fill: area.color,
+      cx: barrelCx, cy: BARREL_TOP_Y, r: 16, fill: area.color,
       class: "area-badge", "data-area": area.id
     });
-    badge.addEventListener("click", function () { selectArea(area.id); });
-    mapContent.appendChild(badge);
+    badge.addEventListener("click", function () {
+      if (barrelDragSuppressClick) return;
+      selectArea(area.id);
+    });
+    badgesG.appendChild(badge);
     var badgeText = svgEl("text", {
-      x: p.x, y: p.y, "text-anchor": "middle",
+      x: barrelCx, y: BARREL_TOP_Y, "text-anchor": "middle",
       class: "area-badge-text", "data-area": area.id
     });
     badgeText.textContent = area.abbr || area.name.slice(0, 2).toUpperCase();
-    badgeText.addEventListener("click", function () { selectArea(area.id); });
-    mapContent.appendChild(badgeText);
+    badgeText.addEventListener("click", function () {
+      if (barrelDragSuppressClick) return;
+      selectArea(area.id);
+    });
+    badgesG.appendChild(badgeText);
+    barrelBadgeEls.push({ circle: badge, text: badgeText });
   });
 
   app.innerHTML = "";
   app.appendChild(svg);
+
+  setupBarrelDrag(svg);
+  renderBarrelFrame();
+}
+
+function drawBarrelLoop(pathEl, p0, sign, dirx, flare, loopLen, rgb, colored) {
+  var tubeR = 3.4 + 1.6 * Math.max(0, p0.depth);
+  var reach = 46 * loopLen;
+  var p1x = p0.x + dirx * 16 * flare, p1y = p0.y + sign * reach * 0.32;
+  var p2x = p0.x + dirx * 20 * flare, p2y = p0.y + sign * reach * 0.78;
+  var p3x = p0.x + dirx * 4 * flare, p3y = p0.y + sign * reach;
+  var d = "M " + p0.x + " " + p0.y + " C " + p1x + " " + p1y + ", " + p2x + " " + p2y + ", " + p3x + " " + p3y;
+  var col = colored ? barrelShade(rgb, p0.depth) : "rgb(168,168,168)";
+  pathEl.setAttribute("d", d);
+  pathEl.setAttribute("stroke", col);
+  pathEl.setAttribute("stroke-width", tubeR * 2);
+}
+
+// Recomputes every barrel element's position/color for the current
+// state.barrelRotation + state.selectedArea, reusing the DOM pool built in
+// buildWheelMap. Called continuously during a drag gesture, during the
+// rotate-to-front animation, and once after any selection change (via
+// applyFocusState's hook) so highlight/fade colors stay in sync even when
+// nothing is currently being dragged.
+function renderBarrelFrame() {
+  if (!isWheelMode() || !barrelStrandParams || !barrelStripesG) return;
+  var areas = barrelAreas;
+  var rotation = state.barrelRotation || 0;
+  var selectedArea = state.selectedArea;
+  var allColored = !selectedArea;
+  var allSegs = [];
+
+  areas.forEach(function (area, i) {
+    var sp = barrelStrandParams[i];
+    var rgb = hexToRgbArr(area.color);
+    var colored = allColored || selectedArea === area.id;
+    var prevPt = barrelStrandPoint(sp, 0, rotation, barrelCx);
+    for (var s = 0; s < BARREL_SEGMENTS; s++) {
+      var t1 = (s + 1) / BARREL_SEGMENTS;
+      var pt = barrelStrandPoint(sp, t1, rotation, barrelCx);
+      var avgDepth = (prevPt.depth + pt.depth) / 2;
+      var w0 = Math.max(BARREL_MIN_W, BARREL_MAX_W * sp.radius_mult * Math.abs(prevPt.depth));
+      var w1 = Math.max(BARREL_MIN_W, BARREL_MAX_W * sp.radius_mult * Math.abs(pt.depth));
+      var col = colored ? barrelShade(rgb, avgDepth) : (avgDepth >= 0 ? BARREL_GRAY_FRONT : BARREL_GRAY_BACK);
+      var poly = barrelSegEls[i][s];
+      poly.setAttribute("points",
+        (prevPt.x - w0 / 2) + "," + prevPt.y + " " +
+        (pt.x - w1 / 2) + "," + pt.y + " " +
+        (pt.x + w1 / 2) + "," + pt.y + " " +
+        (prevPt.x + w0 / 2) + "," + prevPt.y);
+      poly.setAttribute("fill", col);
+      allSegs.push({ depth: avgDepth, el: poly });
+      prevPt = pt;
+    }
+
+    var top0 = barrelStrandPoint(sp, 0, rotation, barrelCx);
+    var bot0 = barrelStrandPoint(sp, 1, rotation, barrelCx);
+    var dirx = (i % 2 === 0) ? 1 : -1;
+    drawBarrelLoop(barrelLoopEls[i].top, top0, -1, dirx, sp.top_flare, sp.top_loop_len, rgb, colored);
+    drawBarrelLoop(barrelLoopEls[i].bot, bot0, 1, -dirx, sp.bot_flare, sp.bot_loop_len, rgb, colored);
+    allSegs.push({ depth: Math.max(-0.3, top0.depth), el: barrelLoopEls[i].top });
+    allSegs.push({ depth: Math.max(-0.3, bot0.depth), el: barrelLoopEls[i].bot });
+  });
+
+  // Painter's algorithm: re-appending an existing node moves it (doesn't
+  // clone it) to the end of its parent, reordering the whole pool
+  // back-to-front with no element creation/destruction on any frame.
+  allSegs.sort(function (a, b) { return a.depth - b.depth; });
+  allSegs.forEach(function (seg) { barrelStripesG.appendChild(seg.el); });
+
+  areas.forEach(function (area, i) {
+    var sp = barrelStrandParams[i];
+    var top0 = barrelStrandPoint(sp, 0, rotation, barrelCx);
+    var rgb = hexToRgbArr(area.color);
+    var b = barrelBadgeEls[i];
+    var visible = top0.depth > BARREL_BADGE_VISIBLE_DEPTH;
+    b.circle.classList.toggle("barrel-badge-hidden", !visible);
+    b.text.classList.toggle("barrel-badge-hidden", !visible);
+    if (visible) {
+      var by = top0.y - 78;
+      b.circle.setAttribute("cx", top0.x); b.circle.setAttribute("cy", by);
+      b.text.setAttribute("x", top0.x); b.text.setAttribute("y", by);
+      b.circle.setAttribute("fill", barrelShade(rgb, top0.depth));
+    }
+  });
+
+  Object.keys(barrelStationEls).forEach(function (modId) {
+    var st = barrelStationEls[modId];
+    var sp = barrelStrandParams[st.areaIdx];
+    var pt = barrelStrandPoint(sp, st.t, rotation, barrelCx);
+    st.dot.setAttribute("cx", pt.x);
+    st.dot.setAttribute("cy", pt.y);
+    var dotSide = pt.x >= barrelCx ? 1 : -1;
+    var r = st.dot.classList.contains("interchange-dot") ? 13 : 10;
+    var labelX = pt.x + dotSide * (r + 8);
+    var anchor = dotSide > 0 ? "start" : "end";
+    st.labels.forEach(function (item) {
+      item.el.setAttribute("x", labelX);
+      item.el.setAttribute("y", pt.y + item.lineIndex * LABEL_LINE_GAP + 5);
+      item.el.setAttribute("text-anchor", anchor);
+    });
+  });
+}
+
+function scheduleBarrelRedraw() {
+  if (barrelRedrawScheduled || typeof requestAnimationFrame !== "function") {
+    if (typeof requestAnimationFrame !== "function") renderBarrelFrame();
+    return;
+  }
+  barrelRedrawScheduled = true;
+  requestAnimationFrame(function () {
+    barrelRedrawScheduled = false;
+    renderBarrelFrame();
+  });
+}
+
+// Touch/mouse drag-to-rotate. Uses pointer events (covers both touch and
+// mouse in one listener) on document for move/up so a drag that slides off
+// the svg's edges - very easy on a small phone screen - still tracks
+// correctly instead of stopping dead at the boundary. Re-attaching on every
+// buildWheelMap call removes the previous handlers first so rebuilds (e.g.
+// a resize crossing the mobile breakpoint) don't stack duplicate listeners.
+function setupBarrelDrag(svg) {
+  if (barrelPointerMoveHandler) document.removeEventListener("pointermove", barrelPointerMoveHandler);
+  if (barrelPointerUpHandler) {
+    document.removeEventListener("pointerup", barrelPointerUpHandler);
+    document.removeEventListener("pointercancel", barrelPointerUpHandler);
+  }
+
+  svg.addEventListener("pointerdown", function (e) {
+    if (barrelRotateRAF) { cancelAnimationFrame(barrelRotateRAF); barrelRotateRAF = null; }
+    barrelPointerState = { x: e.clientX, startRotation: state.barrelRotation || 0, moved: false };
+  });
+
+  barrelPointerMoveHandler = function (e) {
+    if (!barrelPointerState) return;
+    var dx = e.clientX - barrelPointerState.x;
+    if (Math.abs(dx) > 4) barrelPointerState.moved = true;
+    if (!barrelPointerState.moved) return;
+    e.preventDefault();
+    state.barrelRotation = barrelPointerState.startRotation + dx * BARREL_ROTATE_SENSITIVITY;
+    scheduleBarrelRedraw();
+  };
+  // A drag that moved past the threshold shouldn't also fire the badge/dot/
+  // strand click that lands under the finger on release - barrelDragSuppressClick
+  // is checked at the top of every barrel click handler above and cleared
+  // on the next tick (after the browser's own click event, if any, fires).
+  barrelPointerUpHandler = function () {
+    if (barrelPointerState && barrelPointerState.moved) {
+      barrelDragSuppressClick = true;
+      setTimeout(function () { barrelDragSuppressClick = false; }, 0);
+    }
+    barrelPointerState = null;
+  };
+  document.addEventListener("pointermove", barrelPointerMoveHandler, { passive: false });
+  document.addEventListener("pointerup", barrelPointerUpHandler);
+  document.addEventListener("pointercancel", barrelPointerUpHandler);
+  svg.style.touchAction = "none";
+}
+
+// Tapping an area's badge/strand/station rotates that strand to face the
+// viewer head-on (its t=0.5 midpoint reaches depth=1) - replaces the flat
+// wheel's zoom-to-spoke behavior, since a barrel doesn't zoom, it turns.
+function rotateBarrelToFront(areaId) {
+  if (!barrelAreas || !barrelStrandParams) return;
+  var i = -1;
+  for (var k = 0; k < barrelAreas.length; k++) {
+    if (barrelAreas[k].id === areaId) { i = k; break; }
+  }
+  if (i === -1) return;
+  var sp = barrelStrandParams[i];
+  var tEffMid = sp.top_t_offset + 0.5 * (1 - sp.top_t_offset + sp.bot_t_offset);
+  var target = -(sp.base_angle + sp.twist * tEffMid);
+  var current = state.barrelRotation || 0;
+  // Shortest angular path to an equivalent target (mod 360), so a strand
+  // already close to front never spins the long way around to get there.
+  var diff = ((target - current + 180) % 360 + 360) % 360 - 180;
+  var targetRotation = current + diff;
+
+  if (barrelRotateRAF) cancelAnimationFrame(barrelRotateRAF);
+  if (typeof requestAnimationFrame !== "function") {
+    state.barrelRotation = targetRotation;
+    renderBarrelFrame();
+    return;
+  }
+  var start = current;
+  var t0 = (typeof performance !== "undefined" ? performance.now() : Date.now());
+  var dur = 450;
+  function step(now) {
+    var t = Math.min(1, (now - t0) / dur);
+    var e = 1 - Math.pow(1 - t, 3);
+    state.barrelRotation = start + (targetRotation - start) * e;
+    renderBarrelFrame();
+    barrelRotateRAF = t < 1 ? requestAnimationFrame(step) : null;
+  }
+  barrelRotateRAF = requestAnimationFrame(step);
 }
 
 function buildMap(app) {
@@ -2587,6 +2975,98 @@ function computeLineZoomViewBox(areaId) {
   return [cx - w / 2, cy - h / 2, w, h];
 }
 
+// Wheel equivalent of computeLineZoomViewBox above - that function reads
+// LAYOUT.linePaths/areaLabelPos, which are never populated for
+// MOBILE_LAYOUT's wheel geometry (computed at render time, not
+// hand-authored), so it always returned null for the wheel and zoom was a
+// no-op. This reads the actual rendered dot/label elements for the
+// selected spoke instead - always up to date with whatever
+// buildWheelMap() just drew, no coordinate table to keep in sync. Called
+// AFTER applyFocusState() (see selectArea) so label bboxes reflect the
+// enlarged .line-focused font-size they'll actually render at.
+function computeWheelZoomViewBox(areaId) {
+  var svg = document.getElementById("subway-map");
+  if (!svg) return null;
+  var full = fullViewBoxArray();
+  var hubX = full[0] + full[2] / 2, hubY = full[1] + full[3] / 2;
+
+  // Bounds start at the hub center - a spoke visually starts there, so it
+  // should always be included in its own zoom box.
+  var minX = hubX, maxX = hubX, minY = hubY, maxY = hubY;
+  function grow(x, y) {
+    minX = Math.min(minX, x); maxX = Math.max(maxX, x);
+    minY = Math.min(minY, y); maxY = Math.max(maxY, y);
+  }
+
+  var found = false;
+  state.data.modalities.forEach(function (mod) {
+    if (mod.areas[0] !== areaId) return;
+    found = true;
+    var dot = svg.querySelector('[data-station="' + mod.id + '"]');
+    if (dot) {
+      var r = parseFloat(dot.getAttribute("r")) || 13;
+      var dcx = parseFloat(dot.getAttribute("cx"));
+      var dcy = parseFloat(dot.getAttribute("cy"));
+      grow(dcx - r, dcy - r);
+      grow(dcx + r, dcy + r);
+    }
+    svg.querySelectorAll('[data-station-label="' + mod.id + '"]').forEach(function (label) {
+      var box = null;
+      if (typeof label.getBBox === "function") {
+        try { box = label.getBBox(); } catch (e) { box = null; }
+      }
+      if (!box || (!box.width && !box.height)) box = estimateTextBBox(label);
+      grow(box.x, box.y);
+      grow(box.x + box.width, box.y + box.height);
+    });
+  });
+  if (!found) return null;
+
+  var badge = svg.querySelector('.area-badge[data-area="' + areaId + '"]');
+  if (badge) {
+    var br = parseFloat(badge.getAttribute("r")) || 16;
+    var bcx = parseFloat(badge.getAttribute("cx"));
+    var bcy = parseFloat(badge.getAttribute("cy"));
+    grow(bcx - br, bcy - br);
+    grow(bcx + br, bcy + br);
+  }
+
+  var padX = Math.max((maxX - minX) * 0.15, full[2] * 0.04);
+  var padY = Math.max((maxY - minY) * 0.15, full[3] * 0.04);
+  minX -= padX; maxX += padX; minY -= padY; maxY += padY;
+
+  var zcx = (minX + maxX) / 2, zcy = (minY + maxY) / 2;
+  var w = maxX - minX, h = maxY - minY;
+  var targetAspect = full[2] / full[3];
+  if (w / h > targetAspect) h = w / targetAspect; else w = h * targetAspect;
+
+  // Floor the zoom so a spoke with only 1-2 stations can't zoom in
+  // dramatically further than a spoke with many - same idea as
+  // computeLineZoomViewBox's MIN_ZOOM_W/H, tuned to this wheel's own
+  // proportions.
+  var MIN_ZOOM_W = full[2] * 0.35;
+  var MIN_ZOOM_H = full[3] * 0.35;
+  if (w < MIN_ZOOM_W) { h *= MIN_ZOOM_W / w; w = MIN_ZOOM_W; }
+  else if (h < MIN_ZOOM_H) { w *= MIN_ZOOM_H / h; h = MIN_ZOOM_H; }
+
+  if (w > full[2] || h > full[3]) {
+    var scale = Math.min(full[2] / w, full[3] / h);
+    w *= scale;
+    h *= scale;
+  }
+
+  var fx0 = full[0], fx1 = full[0] + full[2];
+  var fy0 = full[1], fy1 = full[1] + full[3];
+  var x0 = zcx - w / 2, x1 = zcx + w / 2;
+  if (x0 < fx0) zcx += fx0 - x0;
+  else if (x1 > fx1) zcx -= x1 - fx1;
+  var y0 = zcy - h / 2, y1 = zcy + h / 2;
+  if (y0 < fy0) zcy += fy0 - y0;
+  else if (y1 > fy1) zcy -= y1 - fy1;
+
+  return [zcx - w / 2, zcy - h / 2, w, h];
+}
+
 function animateMapViewBox(target) {
   var svg = document.getElementById("subway-map");
   if (!svg || typeof requestAnimationFrame !== "function") {
@@ -2613,14 +3093,18 @@ function selectArea(areaId) {
   state.detailView = null;
   state.comparing = false;
   applyFocusState();
-  var zoomTarget = computeLineZoomViewBox(areaId);
-  if (zoomTarget) animateMapViewBox(zoomTarget);
+  if (isWheelMode()) {
+    rotateBarrelToFront(areaId);
+  } else {
+    var zoomTarget = computeLineZoomViewBox(areaId);
+    if (zoomTarget) animateMapViewBox(zoomTarget);
+  }
   document.getElementById("back-btn").classList.remove("hidden");
   document.getElementById("detail-panel").classList.add("hidden");
   syncSheetBackdrop(false);
   var areaObj = state.data.areas.filter(function (a) { return a.id === areaId; })[0];
   document.getElementById("subtitle").textContent = isWheelMode()
-    ? "Viewing " + areaObj.name + " - tap a station for its detail"
+    ? "Viewing " + areaObj.name + " - drag to rotate, tap a station for its detail"
     : "Viewing the " + areaObj.name + " line - tap a station, drag to explore other lines";
 }
 
@@ -2719,6 +3203,14 @@ function applyFocusState() {
 
     if (dot) dot.classList.toggle("selected", isSelected);
   });
+
+  // 2026-08-21: the barrel's strand ribbon/loop colors are computed per-
+  // depth in JS (renderBarrelFrame), not via static CSS classes like the
+  // rest of this function - so any state change that reaches
+  // applyFocusState (select/back/pin, all of which call this) also needs to
+  // trigger a barrel color resync, or a selection made while the barrel
+  // isn't actively being dragged would silently not repaint.
+  if (isWheelMode()) scheduleBarrelRedraw();
 }
 
 function selectStation(modId) {
