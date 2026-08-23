@@ -1756,13 +1756,19 @@ function barrelRadiusProfile(t) {
 
 // x/y/depth of point t (0 = top end, 1 = bottom end) along strand sp, at
 // the barrel's current rotation.
-function barrelStrandPoint(sp, t, rotationDeg, cx) {
+// radiusScale (default 1) lets a caller trace the SAME strand curve at a
+// larger radius without duplicating this math - the echo field (see
+// buildBarrelEchoField) is exactly this function called with radiusScale >
+// 1 instead of an independent curve, which is what keeps it visually and
+// mechanically tied to the real strand (same rotation, same twist, same
+// per-frame update).
+function barrelStrandPoint(sp, t, rotationDeg, cx, radiusScale) {
   var tEff = sp.top_t_offset + t * (1 - sp.top_t_offset + sp.bot_t_offset);
   var angDeg = sp.base_angle + rotationDeg + sp.twist * tEff;
   var ang = (angDeg * Math.PI) / 180;
   var prof = barrelRadiusProfile(t + sp.bulge_phase);
   prof = 1 + (prof - 1) * sp.bulge_amt;
-  var r = BARREL_RADIUS * sp.radius_mult * prof;
+  var r = BARREL_RADIUS * sp.radius_mult * prof * (radiusScale || 1);
   return {
     x: cx + r * Math.sin(ang),
     y: BARREL_TOP_Y + (BARREL_BOT_Y - BARREL_TOP_Y) * t,
@@ -1804,6 +1810,78 @@ var barrelRotateRAF = null;
 var barrelPointerMoveHandler = null;
 var barrelPointerUpHandler = null;
 
+// 2026-08-22: April's final direction on the "hi-tech background" ask -
+// drop the independent wave-line background entirely (it never felt like
+// part of the barrel, just wallpaper behind it) in favor of an "echo
+// field": each area strand's own twist curve (the exact same math as
+// barrelStrandPoint) retraced at a few larger radii, thin and fading with
+// distance, in that strand's own color. Since it's built from the SAME
+// per-frame rotation value as the real strands (see the render loop in
+// renderBarrelFrame), it rotates together with the barrel for free - no
+// separate animation needed for that part.
+//
+// Opacity is its own two-stage SMIL timeline, independent of the `d`
+// updates renderBarrelFrame does every drag frame: stage 1 is a one-time
+// "power on" fade from 0 up to the layer's target opacity (staggered per
+// area/layer so it sweeps across the barrel rather than popping in at
+// once); stage 2 - chained via begin="<stage1 id>.end" so it picks up the
+// instant stage 1 finishes - is an endless breathe loop between a dim
+// floor and that same target opacity, so the field stays alive as ambient
+// motion under the barrel instead of settling into a static drawing.
+var BARREL_ECHO_LAYERS = [
+  { scale: 1.22, opacity: 0.28 },
+  { scale: 1.5, opacity: 0.18 },
+  { scale: 1.85, opacity: 0.1 },
+  { scale: 2.2, opacity: 0.05 }
+];
+var BARREL_ECHO_SAMPLES = 40;
+var barrelEchoEls = []; // [strandIdx] -> [layerIdx] -> <path>
+
+function buildBarrelEchoField(areas) {
+  var g = svgEl("g", { id: "barrel-echo-field", "pointer-events": "none" });
+  barrelEchoEls = [];
+  var reduceMotion = typeof window.matchMedia === "function" &&
+    window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  areas.forEach(function (area, i) {
+    var layerEls = [];
+    BARREL_ECHO_LAYERS.forEach(function (layer, li) {
+      var path = svgEl("path", {
+        d: "M0,0",
+        fill: "none",
+        stroke: area.color,
+        "stroke-width": 1.3,
+        opacity: reduceMotion ? layer.opacity : 0
+      });
+      if (!reduceMotion) {
+        var fadeInId = "barrel-echo-in-" + i + "-" + li;
+        var delay = (i * 0.05 + li * 0.12).toFixed(2);
+        path.appendChild(svgEl("animate", {
+          id: fadeInId,
+          attributeName: "opacity", from: 0, to: layer.opacity,
+          dur: "1.4s", begin: delay + "s", fill: "freeze"
+        }));
+        // dim floor is a fraction of this layer's own target, so outer
+        // (already-faint) layers dim toward something still faintly
+        // visible rather than every layer bottoming out near-identical
+        var dimFloor = (layer.opacity * 0.22).toFixed(3);
+        var pulseDur = (2.6 + (i % 4) * 0.35 + li * 0.25).toFixed(2);
+        path.appendChild(svgEl("animate", {
+          attributeName: "opacity",
+          values: dimFloor + ";" + layer.opacity + ";" + dimFloor,
+          keyTimes: "0;0.5;1",
+          dur: pulseDur + "s",
+          begin: fadeInId + ".end",
+          repeatCount: "indefinite"
+        }));
+      }
+      g.appendChild(path);
+      layerEls.push(path);
+    });
+    barrelEchoEls.push(layerEls);
+  });
+  return g;
+}
+
 function buildWheelMap(app) {
   var areas = state.data.areas;
   var perArea = wheelPerArea();
@@ -1822,6 +1900,13 @@ function buildWheelMap(app) {
   var svg = svgEl("svg", { id: "subway-map", viewBox: MOBILE_LAYOUT.viewBox });
   var mapContent = svgEl("g", { id: "map-content" });
   svg.appendChild(mapContent);
+
+  // 2026-08-22: April's "hi-tech feel" ask, final form - an echo field
+  // built from each strand's own curve (see buildBarrelEchoField above),
+  // drawn first so the real strands paint over it. Positioned every frame
+  // in renderBarrelFrame using the same rotation value as the real
+  // strands, so dragging the barrel turns the field with it for free.
+  mapContent.appendChild(buildBarrelEchoField(areas));
 
   // Decorative cask-outline rims (top/mid/bottom) - purely cosmetic, suggest
   // the 3D silhouette the way the Python mockup's guide ellipses did.
@@ -2057,6 +2142,26 @@ function renderBarrelFrame() {
     drawBarrelLoop(barrelLoopEls[i].bot, bot0, 1, -dirx, sp.bot_flare, sp.bot_loop_len, rgb, colored);
     allSegs.push({ depth: Math.max(-0.3, top0.depth), el: barrelLoopEls[i].top });
     allSegs.push({ depth: Math.max(-0.3, bot0.depth), el: barrelLoopEls[i].bot });
+  });
+
+  // Echo field: retrace each strand's curve at a few larger radii, using
+  // this SAME rotation value - this is the entire mechanism behind it
+  // turning together with the barrel on drag. Only `d` is touched here;
+  // opacity is left alone so the one-time fade-in <animate> (set up in
+  // buildBarrelEchoField) isn't interrupted by every frame during a drag.
+  areas.forEach(function (area, i) {
+    var sp = barrelStrandParams[i];
+    var layerEls = barrelEchoEls[i];
+    if (!layerEls) return;
+    BARREL_ECHO_LAYERS.forEach(function (layer, li) {
+      var d = "";
+      for (var s = 0; s <= BARREL_ECHO_SAMPLES; s++) {
+        var t = s / BARREL_ECHO_SAMPLES;
+        var pt = barrelStrandPoint(sp, t, rotation, barrelCx, layer.scale);
+        d += (s === 0 ? "M" : " L") + pt.x.toFixed(1) + "," + pt.y.toFixed(1);
+      }
+      layerEls[li].setAttribute("d", d);
+    });
   });
 
   // Painter's algorithm: re-appending an existing node moves it (doesn't
