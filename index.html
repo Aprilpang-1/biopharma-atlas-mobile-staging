@@ -9,7 +9,26 @@
 <body>
   <header>
     <h1>PharmaWheel</h1>
-    <p class="subtitle" id="subtitle">Phase 4 — tap an area to explore its modalities</p>
+    <!-- Desktop metro map still reads this element's text (see selectArea/
+         backToOverview, app.js) and displays it as plain text - untouched.
+         Hidden on mobile only (see style.css mobile block), where the
+         search bar below takes over as both the hint and the interactive
+         search entry point. -->
+    <p class="subtitle" id="subtitle">Tap a line to explore</p>
+    <!-- 2026-08-22: April's "Google Maps search bar" ask - mobile-only
+         (see style.css: hidden by default, shown under the 600px media
+         query), replacing the old hint sentence in that same spot. Wired
+         up in wireSearchBar() (app.js): typing filters lines+stations,
+         matches drop down here, tapping one calls the same selectArea()/
+         selectStation() every badge and station dot already uses. -->
+    <div class="search-bar" id="search-bar">
+      <svg class="search-icon" viewBox="0 0 20 20" aria-hidden="true">
+        <circle cx="9" cy="9" r="6.5" fill="none" stroke="currentColor" stroke-width="1.8" />
+        <line x1="13.6" y1="13.6" x2="18" y2="18" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" />
+      </svg>
+      <input type="text" id="search-input" class="search-input" placeholder="Search a line or station..." autocomplete="off" />
+      <div class="search-results hidden" id="search-results"></div>
+    </div>
   </header>
 
   <div id="toolbar">

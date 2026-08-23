@@ -881,6 +881,7 @@ function loadAtlas() {
       buildMap(app);
       renderLegend();
       wireToolbar();
+      wireSearchBar();
       setupMapAutoFit(app);
     })
     .catch(function (err) {
@@ -956,7 +957,19 @@ function fitMapToContainer(app) {
       bottomSafe = Math.max(appRect.bottom - toolbarTop, 0) + 24;
     }
     var usableH = Math.max(ch - topSafe - bottomSafe, 100);
-    var wScale = Math.min(cw / vbW, usableH / vbH);
+    // Scale basis is the barrel's actual measured content box (see
+    // BARREL_CONTENT_W/H above), not the full padded vbW/vbH canvas -
+    // otherwise a lot of empty canvas margin gets "contained" right along
+    // with the barrel, making the barrel itself read far smaller than the
+    // fraction actually reserved for it. BARREL_FILL_FRACTION then scales
+    // that back down from "content exactly fills the safe area" to
+    // "content fills ~80% of it", per April's ask. Because the content box
+    // is narrower/shorter than the full 900x980 canvas, the svg element
+    // itself (still sized off the full vbW/vbH so its own coordinate
+    // system is untouched) ends up somewhat larger than cw/usableH and
+    // overflows the sides a bit at typical phone aspect ratios - harmless
+    // since nothing is drawn out in that padding, and #app clips it.
+    var wScale = BARREL_FILL_FRACTION * Math.min(cw / BARREL_CONTENT_W, usableH / BARREL_CONTENT_H);
     var wW = vbW * wScale, wH = vbH * wScale;
     svg.setAttribute("preserveAspectRatio", "xMidYMid meet");
     svg.style.width = wW + "px";
@@ -1697,6 +1710,23 @@ var BARREL_RADIUS = 150;        // GFP-accurate: 42x24 A -> ~1.75:1 height:diame
 var BARREL_BULGE = 0.10;        // GFP reads as almost a straight cylinder
 var BARREL_RIM_RY = 30;
 var BARREL_MAX_W = 46;
+// 2026-08-22: April wants the barrel itself zoomed up to ~80% of the
+// screen (separately from the echo field, which now fills 100% behind
+// it - see #barrel-echo-bg). Measured empirically (jsdom, real seed-11
+// strand params, all 10 areas): the barrel's actual drawn content -
+// loops and badges included, not just the strand ribbons - only occupies
+// about 522.8 x 846.3 of the full 900x980 canvas (58%/86%). Fitting to
+// the full canvas (the old behavior) wastes that unused padding as dead
+// space around a barrel that reads much smaller than it should.
+// fitMapToContainer's wheel-mode branch uses THESE dimensions (not
+// BARREL_W/H) as the contain-fit basis instead, so the scale is driven by
+// what's actually visible. Deterministic for the current 10-area content;
+// if the area count changes materially later, re-measure (see
+// measure_barrel_bbox.js pattern) rather than assume these stay exact -
+// being slightly off just under/over-shoots the 80% target a bit, it
+// doesn't break anything.
+var BARREL_CONTENT_W = 525, BARREL_CONTENT_H = 850;
+var BARREL_FILL_FRACTION = 0.8;
 var BARREL_MIN_W = 6;
 var BARREL_SEGMENTS = 18;       // 60 in the Python mockup; trimmed for mobile perf
 var BARREL_BADGE_VISIBLE_DEPTH = -0.05;
@@ -1910,11 +1940,29 @@ function buildWheelMap(app) {
   svg.appendChild(mapContent);
 
   // 2026-08-22: April's "hi-tech feel" ask, final form - an echo field
-  // built from each strand's own curve (see buildBarrelEchoField above),
-  // drawn first so the real strands paint over it. Positioned every frame
-  // in renderBarrelFrame using the same rotation value as the real
-  // strands, so dragging the barrel turns the field with it for free.
-  mapContent.appendChild(buildBarrelEchoField(areas));
+  // built from each strand's own curve (see buildBarrelEchoField above).
+  // Originally lived inside #subway-map's own mapContent, but that svg is
+  // contain-fit to the barrel's 900x980 aspect ratio and centered inside
+  // #app (which is fixed/inset:0 - the actual full screen) - on any phone
+  // whose aspect ratio doesn't match 900:980 (nearly all of them), that
+  // left visible plain-white #app background around the contained box.
+  // April wanted the echo field to read as the PAGE's background, not
+  // just the barrel's, so it now lives in its own svg sibling
+  // (#barrel-echo-bg, see CSS: position:absolute; inset:0) sized to
+  // literally cover 100% of #app. preserveAspectRatio="xMidYMid slice"
+  // uniformly scales the same 900x980 field up until it fills the
+  // container in both dimensions (cropping overflow, never stretching/
+  // distorting it) - the "cover" equivalent of a CSS background-image.
+  // barrelEchoEls (the actual <path> elements) are unchanged and still
+  // updated every frame in renderBarrelFrame using the same rotation
+  // value as the real strands - only which svg root they live under
+  // changed, so rotation-sync keeps working for free.
+  var echoSvg = svgEl("svg", {
+    id: "barrel-echo-bg",
+    viewBox: MOBILE_LAYOUT.viewBox,
+    preserveAspectRatio: "xMidYMid slice"
+  });
+  echoSvg.appendChild(buildBarrelEchoField(areas));
 
   // Decorative cask-outline rims (top/mid/bottom) - purely cosmetic, suggest
   // the 3D silhouette the way the Python mockup's guide ellipses did.
@@ -2087,6 +2135,10 @@ function buildWheelMap(app) {
   });
 
   app.innerHTML = "";
+  // echoSvg first so it paints behind #subway-map in normal DOM stacking
+  // order (both are position:absolute with default z-index, so later-in-
+  // DOM wins) - no explicit z-index needed.
+  app.appendChild(echoSvg);
   app.appendChild(svg);
 
   setupBarrelDrag(svg);
@@ -3407,6 +3459,20 @@ function animateMapViewBox(target) {
   mapZoomRAF = requestAnimationFrame(step);
 }
 
+// 2026-08-22: single place that writes the "what's going on" status text -
+// used to be a direct getElementById("subtitle").textContent set in two
+// spots (selectArea, backToOverview). Now also mirrors the same text into
+// the mobile search bar's placeholder (search-input has no value of its
+// own until the user types/selects something, so the placeholder is where
+// this status reads on mobile - #subtitle itself is hidden there but
+// desktop still reads it directly, untouched).
+function setStatusText(msg) {
+  var subtitleEl = document.getElementById("subtitle");
+  if (subtitleEl) subtitleEl.textContent = msg;
+  var searchInput = document.getElementById("search-input");
+  if (searchInput) searchInput.placeholder = msg;
+}
+
 function selectArea(areaId) {
   state.selectedArea = areaId;
   state.selectedStation = null;
@@ -3423,9 +3489,9 @@ function selectArea(areaId) {
   document.getElementById("detail-panel").classList.add("hidden");
   syncSheetBackdrop(false);
   var areaObj = state.data.areas.filter(function (a) { return a.id === areaId; })[0];
-  document.getElementById("subtitle").textContent = isWheelMode()
+  setStatusText(isWheelMode()
     ? "Viewing " + areaObj.name + " - drag to rotate, tap a station for its detail"
-    : "Viewing the " + areaObj.name + " line - tap a station, drag to explore other lines";
+    : "Viewing the " + areaObj.name + " line - tap a station, drag to explore other lines");
 }
 
 function backToOverview() {
@@ -3438,7 +3504,12 @@ function backToOverview() {
   document.getElementById("back-btn").classList.add("hidden");
   document.getElementById("detail-panel").classList.add("hidden");
   syncSheetBackdrop(false);
-  document.getElementById("subtitle").textContent = "Tap a line to explore";
+  setStatusText("Tap a line to explore");
+  // Clear back to the placeholder rather than leave a stale searched-for
+  // name sitting in the bar once the user has navigated away from it.
+  var searchInput = document.getElementById("search-input");
+  if (searchInput) searchInput.value = "";
+  closeSearchResults();
 }
 
 function backToStationList() {
@@ -3745,6 +3816,133 @@ function wireLegendToggle() {
     if (e.target.closest(".legend-item")) {
       panel.classList.remove("open");
     }
+  });
+}
+
+// 2026-08-22: April's "Google Maps search bar" ask - the mobile header's
+// hint strip is now a real search input (see index.html/style.css). No
+// separate persisted index: the dataset is tiny (10 lines, a few dozen
+// stations), so every keystroke just filters state.data directly rather
+// than maintaining a cache that could go stale.
+//
+// Matches both areas (lines) and modalities (stations) by substring,
+// case-insensitive, against their display name. Results are ranked
+// name-starts-with-query first (then alphabetical), lines and stations
+// interleaved by that same rank rather than lines-always-first - a
+// station whose name starts with what you typed should outrank a line
+// that only contains it midway through. Capped to 8 so the dropdown never
+// grows into something that needs its own scroll-within-a-scroll.
+function computeSearchResults(query) {
+  var q = query.trim().toLowerCase();
+  if (!q) return [];
+  var results = [];
+  state.data.areas.forEach(function (area) {
+    var idx = area.name.toLowerCase().indexOf(q);
+    if (idx === -1) return;
+    results.push({ type: "area", id: area.id, label: area.name, color: area.color, sublabel: null, rank: idx });
+  });
+  state.data.modalities.forEach(function (mod) {
+    var idx = mod.name.toLowerCase().indexOf(q);
+    if (idx === -1) return;
+    var primaryArea = state.data.areas.filter(function (a) { return a.id === mod.areas[0]; })[0];
+    if (!primaryArea) return;
+    var sublabel = mod.areas.length > 1
+      ? "Shared across " + mod.areas.length + " areas"
+      : "in " + primaryArea.name;
+    results.push({
+      type: "station", id: mod.id, areaId: primaryArea.id,
+      label: mod.name, color: primaryArea.color, sublabel: sublabel, rank: idx
+    });
+  });
+  results.sort(function (a, b) {
+    if (a.rank !== b.rank) return a.rank - b.rank;
+    return a.label.localeCompare(b.label);
+  });
+  return results.slice(0, 8);
+}
+
+function closeSearchResults() {
+  var resultsEl = document.getElementById("search-results");
+  if (!resultsEl) return;
+  resultsEl.classList.add("hidden");
+  resultsEl.innerHTML = "";
+}
+
+function renderSearchResults(results, query) {
+  var resultsEl = document.getElementById("search-results");
+  if (!resultsEl) return;
+  if (!results.length) {
+    resultsEl.innerHTML = '<div class="search-empty">No matches for &ldquo;' + esc(query.trim()) + "&rdquo;</div>";
+    resultsEl.classList.remove("hidden");
+    return;
+  }
+  resultsEl.innerHTML = results.map(function (r) {
+    return '<div class="search-result-row" data-result-type="' + r.type + '" data-result-id="' + esc(r.id) + '">' +
+      '<span class="search-result-dot" style="background:' + r.color + '"></span>' +
+      '<span class="search-result-text">' +
+      '<span class="search-result-label">' + esc(r.label) + "</span>" +
+      (r.sublabel ? '<span class="search-result-sublabel">' + esc(r.sublabel) + "</span>" : "") +
+      "</span></div>";
+  }).join("");
+  resultsEl.classList.remove("hidden");
+  resultsEl.querySelectorAll(".search-result-row").forEach(function (row) {
+    row.addEventListener("click", function () {
+      var type = row.dataset.resultType;
+      var id = row.dataset.resultId;
+      var match = results.filter(function (r) { return r.type === type && r.id === id; })[0];
+      if (match) handleSearchSelect(match);
+    });
+  });
+}
+
+// Stations aren't clickable/visible until their line is selected (see the
+// "hidden-station" class toggled in applyFocusState) - so a search hit on
+// a station has to select its line first, exactly mirroring what a real
+// visitor would do by hand (tap the badge, then tap the station), just
+// automated into one tap on the result.
+function handleSearchSelect(result) {
+  if (result.type === "area") {
+    selectArea(result.id);
+  } else {
+    selectArea(result.areaId);
+    selectStation(result.id);
+  }
+  var input = document.getElementById("search-input");
+  if (input) {
+    input.value = result.label;
+    input.blur();
+  }
+  closeSearchResults();
+}
+
+function wireSearchBar() {
+  var bar = document.getElementById("search-bar");
+  var input = document.getElementById("search-input");
+  var resultsEl = document.getElementById("search-results");
+  if (!bar || !input || !resultsEl) return;
+
+  input.addEventListener("input", function () {
+    var q = input.value;
+    if (!q.trim()) { closeSearchResults(); return; }
+    renderSearchResults(computeSearchResults(q), q);
+  });
+
+  // Re-show the dropdown if there's already text and the user taps back
+  // into the field (e.g. after selecting a result, then tapping again to
+  // search something else without clearing first).
+  input.addEventListener("focus", function () {
+    if (input.value.trim()) renderSearchResults(computeSearchResults(input.value), input.value);
+  });
+
+  input.addEventListener("keydown", function (e) {
+    if (e.key === "Escape") {
+      closeSearchResults();
+      input.blur();
+    }
+  });
+
+  document.addEventListener("click", function (e) {
+    if (!bar.contains(e.target)) closeSearchResults();
   });
 }
 

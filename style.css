@@ -80,6 +80,13 @@ header h1 {
   font-weight: 500;
 }
 
+/* 2026-08-22: the search bar (see index.html) is mobile-only - desktop
+   keeps the plain .subtitle text line exactly as before. Shown/wired up
+   only under the 600px mobile media query further down this file. */
+.search-bar {
+  display: none;
+}
+
 #toolbar {
   min-height: 2.2rem;
   margin-bottom: 0.5rem;
@@ -1177,6 +1184,33 @@ header h1 {
     padding: 0;
     min-height: 0;
     z-index: 1;
+    /* 2026-08-22: #subway-map is now deliberately scaled off its actual
+       content box rather than its full padded canvas (see
+       BARREL_CONTENT_W/H, app.js) so the barrel itself reads at ~80% of
+       the screen - a side effect is the svg element's own box (sized off
+       the full canvas) runs wider than #app at most phone aspect ratios.
+       Nothing is drawn in that extra margin, but without this the
+       inherited overflow-x:auto (base #app rule) would make it a
+       scrollable dead zone; hidden keeps this shell exactly as fixed/
+       non-scrollable as the rest of this full-screen layout already is. */
+    overflow: hidden;
+  }
+
+  /* 2026-08-22: the barrel's echo field, split out into its own full-bleed
+     svg sibling of #subway-map (see buildWheelMap, app.js) specifically so
+     it can cover the entire #app box (the real full screen, since #app is
+     fixed/inset:0 above) instead of being letterboxed to whatever smaller
+     contain-fit box the barrel itself is scaled into. inset:0 + 100%/100%
+     here is what makes that "cover the whole page" - combined with the
+     svg's own preserveAspectRatio="xMidYMid slice" (set in JS), the field
+     scales up and crops rather than stretching or leaving gaps. */
+  #barrel-echo-bg {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    display: block;
+    pointer-events: none;
   }
 
   /* 2026-08-13: the SVG's own in-map legend-box (renderMapLegendBox,
@@ -1257,28 +1291,116 @@ header h1 {
     display: none;
   }
 
-  /* 2026-08-22: a gentle, looping "look here" pulse on the hint sentence -
-     the strip itself stays solid/static (a static page region reads as
-     calmer and more "webpage-like" than a pulsing bar), but the text
-     drawing you in is exactly the point of this line existing. Paused for
-     anyone with prefers-reduced-motion set, same as any other purely
-     decorative animation. */
-  @keyframes hint-pulse {
-    0%, 100% { opacity: 1; }
-    50% { opacity: 0.5; }
-  }
-
+  /* 2026-08-22: replaced by the search bar below - a real, always-
+     interactive search input is its own affordance and doesn't need the
+     pulsing "look here" treatment the plain hint sentence used to have.
+     Kept in the DOM (desktop still reads it) but hidden here. */
   .subtitle {
-    font-size: 0.85rem;
-    font-weight: 600;
-    margin: 0;
-    animation: hint-pulse 2.4s ease-in-out infinite;
+    display: none;
   }
 
-  @media (prefers-reduced-motion: reduce) {
-    .subtitle {
-      animation: none;
-    }
+  /* 2026-08-22: April's "Google Maps search bar" ask, replacing the old
+     hint sentence in the same strip. position:relative so the dropdown
+     below can anchor to this element's own box (top:100%) rather than
+     needing a JS-measured offset the way header/toolbar clearance does in
+     fitMapToContainer - simpler and self-adjusts if the strip's height
+     ever changes. */
+  .search-bar {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    position: relative;
+    background: #f4f4f6;
+    border-radius: 999px;
+    padding: 0.55rem 0.9rem;
+    text-align: left;
+  }
+
+  .search-icon {
+    width: 17px;
+    height: 17px;
+    flex-shrink: 0;
+    color: #8a8a92;
+  }
+
+  .search-input {
+    flex: 1;
+    min-width: 0;
+    border: none;
+    background: transparent;
+    outline: none;
+    font-size: 0.92rem;
+    font-family: inherit;
+    color: #17202a;
+  }
+
+  .search-input::placeholder {
+    color: #8a8a92;
+  }
+
+  /* Anchored to .search-bar (top:100%) so it always sits right below the
+     pill regardless of header height/safe-area inset. Extends slightly
+     past the pill's own edges to align with the header's outer padding. */
+  .search-results {
+    position: absolute;
+    top: calc(100% + 0.5rem);
+    left: -0.15rem;
+    right: -0.15rem;
+    background: #fff;
+    border-radius: 14px;
+    box-shadow: 0 10px 28px rgba(0, 0, 0, 0.14);
+    max-height: 55vh;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+    padding: 0.3rem 0;
+  }
+
+  .search-result-row {
+    display: flex;
+    align-items: center;
+    gap: 0.65rem;
+    padding: 0.6rem 0.9rem;
+    cursor: pointer;
+  }
+
+  .search-result-row:active,
+  .search-result-row:hover {
+    background: #f4f4f6;
+  }
+
+  .search-result-dot {
+    width: 11px;
+    height: 11px;
+    border-radius: 50%;
+    flex-shrink: 0;
+    border: 1px solid rgba(0, 0, 0, 0.15);
+  }
+
+  .search-result-text {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+  }
+
+  .search-result-label {
+    font-size: 0.9rem;
+    font-weight: 600;
+    color: #17202a;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .search-result-sublabel {
+    font-size: 0.76rem;
+    color: #8a8a92;
+    margin-top: 0.05rem;
+  }
+
+  .search-empty {
+    padding: 0.75rem 0.9rem;
+    font-size: 0.85rem;
+    color: #8a8a92;
   }
 
   /* Takes over the floating-pill treatment header used to have - now
