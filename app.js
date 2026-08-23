@@ -1854,14 +1854,19 @@ var barrelPointerUpHandler = null;
 // renderBarrelFrame), it rotates together with the barrel for free - no
 // separate animation needed for that part.
 //
-// Opacity is its own two-stage SMIL timeline, independent of the `d`
-// updates renderBarrelFrame does every drag frame: stage 1 is a one-time
-// "power on" fade from 0 up to the layer's target opacity (staggered per
-// area/layer so it sweeps across the barrel rather than popping in at
-// once); stage 2 - chained via begin="<stage1 id>.end" so it picks up the
-// instant stage 1 finishes - is an endless breathe loop between a dim
-// floor and that same target opacity, so the field stays alive as ambient
-// motion under the barrel instead of settling into a static drawing.
+// 2026-08-22: April clarified what "keep it moving" meant after two wrong
+// guesses - not a continuous breathing brightness pulse (felt like random
+// flicker), and explicitly NOT a slow rotation drift of the echo curves
+// themselves (that read as the field sliding/"moving up", which she
+// rejected outright). What she wants is the page-load "powering on" sweep
+// itself - the staggered fade-in that plays once when you first open the
+// page - just repeating periodically instead of playing once and settling.
+// So each path now has a SINGLE repeating <animate>, all sharing the same
+// dur (so they all restart in lockstep every cycle) but keeping each
+// path's own stagger via `begin` - same delay values as the original
+// one-shot fade-in - so the sweep-across-the-barrel look replays every
+// cycle instead of only on load. Opacity is the only thing this animates;
+// `d` is still owned entirely by renderBarrelFrame's rotation-sync.
 // 2026-08-22: April tried a darker barrel-only backdrop vs. just boosting
 // the echo field itself to fix low contrast on white, and picked the
 // latter (option C) - keep the white background untouched everywhere,
@@ -1877,6 +1882,30 @@ var BARREL_ECHO_LAYERS = [
 ];
 var BARREL_ECHO_STROKE_WIDTH = 1.7;
 var BARREL_ECHO_SAMPLES = 40;
+// 2026-08-22: April wants the echo field to cover all the space below the
+// search bar, "can be longer than barrel length" - the field's SVG layer
+// (#barrel-echo-bg) already covers the full screen via preserveAspectRatio
+// slice, but the actual drawn curves only ever sampled t=0..1, the SAME
+// span as the real barrel's own body (BARREL_TOP_Y to BARREL_BOT_Y, ~59%
+// of the 900x980 canvas) - leaving real gaps of blank canvas above and
+// below the barrel where no echo line ever reached, regardless of how the
+// background layer itself was scaled to fill the screen.
+// barrelStrandPoint's formulas are all plain linear/continuous functions
+// of t with no clamping on y (only the bulge profile clamps, harmlessly
+// flattening to a constant radius beyond the ends) - so sampling t well
+// outside 0..1 just continues the exact same spiral naturally past where
+// the real barrel's strands end, rather than needing separate extension
+// logic. -0.5..1.5 doubles the drawn length (50% further past each end),
+// comfortably covering the full canvas height on typical phone aspect
+// ratios.
+var BARREL_ECHO_T_MIN = -0.5;
+var BARREL_ECHO_T_MAX = 1.5;
+// Shared cycle length for the repeating "loading sweep" (see
+// buildBarrelEchoField below) - long enough to comfortably fit the ~0.81s
+// max stagger + 2.8s rise-and-fall, with a couple seconds of "all dark"
+// pause before it replays so the repeat itself reads as a deliberate
+// pulse rather than a jittery loop.
+var BARREL_ECHO_SWEEP_SEC = 5;
 var barrelEchoEls = []; // [strandIdx] -> [layerIdx] -> <path>
 
 function buildBarrelEchoField(areas) {
@@ -1895,24 +1924,23 @@ function buildBarrelEchoField(areas) {
         opacity: reduceMotion ? layer.opacity : 0
       });
       if (!reduceMotion) {
-        var fadeInId = "barrel-echo-in-" + i + "-" + li;
+        // Same stagger the original one-shot fade-in used (area index *
+        // 0.05 + layer index * 0.12, max ~0.81s) - this is what makes the
+        // sweep travel across the barrel rather than every line lighting
+        // up at once, on every repeat, not just the first.
         var delay = (i * 0.05 + li * 0.12).toFixed(2);
         path.appendChild(svgEl("animate", {
-          id: fadeInId,
-          attributeName: "opacity", from: 0, to: layer.opacity,
-          dur: "1.4s", begin: delay + "s", fill: "freeze"
-        }));
-        // dim floor is a fraction of this layer's own target, so outer
-        // (already-faint) layers dim toward something still faintly
-        // visible rather than every layer bottoming out near-identical
-        var dimFloor = (layer.opacity * 0.22).toFixed(3);
-        var pulseDur = (2.6 + (i % 4) * 0.35 + li * 0.25).toFixed(2);
-        path.appendChild(svgEl("animate", {
           attributeName: "opacity",
-          values: dimFloor + ";" + layer.opacity + ";" + dimFloor,
-          keyTimes: "0;0.5;1",
-          dur: pulseDur + "s",
-          begin: fadeInId + ".end",
+          // rise 0 -> target over the cycle's first 1.4s (matching the
+          // original fade-in's own duration), fall back to 0 over the
+          // next 1.4s, then stay dark for the remainder of the cycle
+          // before the whole sweep repeats - reads as "the page just
+          // loaded" happening again every BARREL_ECHO_SWEEP_SEC seconds.
+          values: "0;" + layer.opacity + ";0;0",
+          keyTimes: "0;" + (1.4 / BARREL_ECHO_SWEEP_SEC).toFixed(4) +
+            ";" + (2.8 / BARREL_ECHO_SWEEP_SEC).toFixed(4) + ";1",
+          dur: BARREL_ECHO_SWEEP_SEC + "s",
+          begin: delay + "s",
           repeatCount: "indefinite"
         }));
       }
@@ -2209,24 +2237,12 @@ function renderBarrelFrame() {
   });
 
   // Echo field: retrace each strand's curve at a few larger radii, using
-  // this SAME rotation value - this is the entire mechanism behind it
-  // turning together with the barrel on drag. Only `d` is touched here;
-  // opacity is left alone so the one-time fade-in <animate> (set up in
-  // buildBarrelEchoField) isn't interrupted by every frame during a drag.
-  areas.forEach(function (area, i) {
-    var sp = barrelStrandParams[i];
-    var layerEls = barrelEchoEls[i];
-    if (!layerEls) return;
-    BARREL_ECHO_LAYERS.forEach(function (layer, li) {
-      var d = "";
-      for (var s = 0; s <= BARREL_ECHO_SAMPLES; s++) {
-        var t = s / BARREL_ECHO_SAMPLES;
-        var pt = barrelStrandPoint(sp, t, rotation, barrelCx, layer.scale);
-        d += (s === 0 ? "M" : " L") + pt.x.toFixed(1) + "," + pt.y.toFixed(1);
-      }
-      layerEls[li].setAttribute("d", d);
-    });
-  });
+  // this SAME rotation value - this is what keeps it turning together with
+  // the barrel on drag. Factored into updateBarrelEchoPaths() (below) so
+  // the perpetual idle-drift loop can reuse the exact same per-path
+  // building logic with a different (echo-only) rotation value, rather
+  // than duplicating it.
+  updateBarrelEchoPaths(rotation);
 
   // Painter's algorithm: re-appending an existing node moves it (doesn't
   // clone it) to the end of its parent, reordering the whole pool
@@ -2276,6 +2292,47 @@ function renderBarrelFrame() {
     });
   });
 }
+
+// Called by renderBarrelFrame with the real, drag-driven rotation value on
+// every drag frame, keeping the echo field's positions in sync with the
+// barrel. Only `d` is touched here - opacity is owned entirely by the
+// repeating sweep <animate> set up in buildBarrelEchoField.
+//
+// Samples t across BARREL_ECHO_T_MIN..BARREL_ECHO_T_MAX (not just 0..1)
+// so each echo curve runs well past where the real strand's own body
+// starts/ends - see the T_MIN/T_MAX comment above for why extending t is
+// enough on its own (no separate extrapolation logic needed).
+function updateBarrelEchoPaths(rotationForEcho) {
+  if (!barrelStrandParams || !barrelEchoEls.length) return;
+  var tSpan = BARREL_ECHO_T_MAX - BARREL_ECHO_T_MIN;
+  barrelAreas.forEach(function (area, i) {
+    var sp = barrelStrandParams[i];
+    var layerEls = barrelEchoEls[i];
+    if (!layerEls) return;
+    BARREL_ECHO_LAYERS.forEach(function (layer, li) {
+      var d = "";
+      for (var s = 0; s <= BARREL_ECHO_SAMPLES; s++) {
+        var t = BARREL_ECHO_T_MIN + (s / BARREL_ECHO_SAMPLES) * tSpan;
+        var pt = barrelStrandPoint(sp, t, rotationForEcho, barrelCx, layer.scale);
+        d += (s === 0 ? "M" : " L") + pt.x.toFixed(1) + "," + pt.y.toFixed(1);
+      }
+      layerEls[li].setAttribute("d", d);
+    });
+  });
+}
+
+// 2026-08-22: April first asked for the echo field to "keep moving" even
+// when the barrel is static - initially tried as a perpetual slow
+// rotation drift (shifting the echo curves' own positions over time,
+// layered on top of state.barrelRotation via updateBarrelEchoPaths).
+// Rejected: "I want the eco moving like the effect when loading the
+// webpage, not like moving up" - the positional drift read as the field
+// sliding/scrolling, not the "powering on" look she actually wanted
+// repeated. Removed entirely in favor of a purely opacity-based repeating
+// sweep instead (see buildBarrelEchoField's per-path <animate>, which now
+// handles "keeps moving" on its own) - `d` positions are once again ONLY
+// ever touched by renderBarrelFrame during an actual drag, exactly like
+// before this idea was tried.
 
 function scheduleBarrelRedraw() {
   if (barrelRedrawScheduled || typeof requestAnimationFrame !== "function") {
