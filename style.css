@@ -669,12 +669,16 @@ header h1 {
 }
 
 /* 2026-08-22: beta-barrel shared-station markers (buildWheelMap/
-   renderBarrelFrame, app.js) - April's chosen "option D" from the shared-
-   station-marker preview. A dashed line from a shared station's dot out to
-   a small badge per OTHER area it belongs to. Positions are recomputed
-   every frame (the dot itself moves as the barrel rotates); these three
-   classes only own static appearance + the hidden-station fade, same
-   pattern as .tone-dot/.pill-crossing above. */
+   renderBarrelFrame, app.js) - a dashed line from a shared station's dot,
+   reaching all the way to a small marker dot sitting directly ON each
+   OTHER strand it belongs to (not a floating badge - April's revision of
+   the first "option D" round, so it reads as "this bridges these two
+   sheets" rather than "here's a tag"). Positions are recomputed every
+   frame (both the dot and the strand it's reaching for move as the barrel
+   rotates); these two classes only own static appearance + the
+   hidden-station fade, same pattern as .tone-dot/.pill-crossing above.
+   The marker's stroke color (that other area's color, depth-shaded) is set
+   directly in renderBarrelFrame, same as the dot itself would be. */
 .barrel-shared-line {
   fill: none;
   stroke: #888780;
@@ -688,28 +692,13 @@ header h1 {
   opacity: 0;
 }
 
-.barrel-shared-badge {
-  stroke: #222;
-  stroke-width: 1;
+.barrel-shared-marker {
+  stroke-width: 4;
   pointer-events: none;
   transition: opacity 0.3s ease;
 }
 
-.barrel-shared-badge.hidden-station {
-  opacity: 0;
-}
-
-.barrel-shared-badge-text {
-  font-size: 8px;
-  font-weight: 700;
-  fill: #fff;
-  text-anchor: middle;
-  dominant-baseline: central;
-  pointer-events: none;
-  transition: opacity 0.3s ease;
-}
-
-.barrel-shared-badge-text.hidden-station {
+.barrel-shared-marker.hidden-station {
   opacity: 0;
 }
 

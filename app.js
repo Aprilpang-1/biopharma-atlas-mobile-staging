@@ -1885,26 +1885,27 @@ function buildWheelMap(app) {
       });
 
       // 2026-08-22: April picked "option D" from the shared-station-marker
-      // preview - a dashed line from the station's dot out to a small badge
-      // for each OTHER area it belongs to (mod.areas[0] is the primary area
-      // the dot itself is drawn on). Built once here as a pooled set of
-      // elements per other-area, repositioned every frame in
-      // renderBarrelFrame alongside the dot itself, and shown/hidden in
-      // lockstep with the dot's own hidden-station state (read there, not
-      // recomputed here - see positionSharedTags).
+      // preview - a dashed line from the station's dot reaching all the way
+      // across to a small marker dot sitting ON each OTHER strand it
+      // belongs to (mod.areas[0] is the primary area the main dot is drawn
+      // on), at the same height (t) as the station itself. Replaces the
+      // first "option D" round, which stopped the line at a floating badge
+      // instead of actually touching the other strand - April wanted it to
+      // read as "this bridges these two sheets", not "here's a tag". Built
+      // once here as a pooled set of elements per other-area, repositioned
+      // every frame in renderBarrelFrame alongside the dot itself, and
+      // shown/hidden in lockstep with the dot's own hidden-station state
+      // (read there, not recomputed here).
       var sharedTags = mod.areas.slice(1).map(function (otherAreaId) {
-        var otherArea = state.data.areas.filter(function (a) { return a.id === otherAreaId; })[0];
-        var line = svgEl("line", { class: "barrel-shared-line hidden-station" });
+        var otherIdx = areas.map(function (a) { return a.id; }).indexOf(otherAreaId);
+        var otherArea = areas[otherIdx];
+        var line = svgEl("path", { class: "barrel-shared-line hidden-station", d: "M0 0" });
         stationsG.appendChild(line);
-        var badge = svgEl("circle", {
-          r: 9, class: "barrel-shared-badge hidden-station",
-          fill: otherArea ? otherArea.color : "#888"
+        var marker = svgEl("circle", {
+          r: 9, class: "barrel-shared-marker hidden-station", fill: "#fff"
         });
-        stationsG.appendChild(badge);
-        var text = svgEl("text", { class: "barrel-shared-badge-text hidden-station" });
-        text.textContent = otherArea ? (otherArea.abbr || otherArea.name.slice(0, 2).toUpperCase()) : "?";
-        stationsG.appendChild(text);
-        return { line: line, badge: badge, text: text, color: otherArea ? otherArea.color : "#888" };
+        stationsG.appendChild(marker);
+        return { line: line, marker: marker, otherIdx: otherIdx, color: otherArea ? otherArea.color : "#888" };
       });
 
       barrelStationEls[mod.id] = { dot: dot, labels: labelEls, sharedTags: sharedTags, areaIdx: areaIdx, t: t };
@@ -2060,25 +2061,27 @@ function renderBarrelFrame() {
       item.el.setAttribute("text-anchor", anchor);
     });
 
-    // "Option D": a dashed line from the dot to a small badge for each
-    // OTHER area the station belongs to. Visibility mirrors the dot's own
-    // hidden-station state (set elsewhere, by applyFocusState) rather than
-    // being recomputed here, so it can never drift out of sync with
-    // whether the dot itself is actually showing.
+    // A dashed line from the dot reaching all the way to a small marker on
+    // each OTHER strand the station belongs to, at the same height (t) as
+    // the station itself - April's approved "connects to the other sheet"
+    // design. Visibility mirrors the dot's own hidden-station state (set
+    // elsewhere, by applyFocusState) rather than being recomputed here, so
+    // it can never drift out of sync with whether the dot itself is
+    // actually showing.
     var dotHidden = st.dot.classList.contains("hidden-station");
-    var n = st.sharedTags.length;
-    var tagGap = 22;
-    st.sharedTags.forEach(function (tag, idx) {
+    st.sharedTags.forEach(function (tag) {
       tag.line.classList.toggle("hidden-station", dotHidden);
-      tag.badge.classList.toggle("hidden-station", dotHidden);
-      tag.text.classList.toggle("hidden-station", dotHidden);
+      tag.marker.classList.toggle("hidden-station", dotHidden);
       if (dotHidden) return;
-      var tagX = pt.x + (idx - (n - 1) / 2) * tagGap;
-      var tagY = pt.y - 38;
-      tag.line.setAttribute("x1", pt.x); tag.line.setAttribute("y1", pt.y);
-      tag.line.setAttribute("x2", tagX); tag.line.setAttribute("y2", tagY);
-      tag.badge.setAttribute("cx", tagX); tag.badge.setAttribute("cy", tagY);
-      tag.text.setAttribute("x", tagX); tag.text.setAttribute("y", tagY);
+      var otherSp = barrelStrandParams[tag.otherIdx];
+      var otherPt = barrelStrandPoint(otherSp, st.t, rotation, barrelCx);
+      var ctrlX = (pt.x + otherPt.x) / 2;
+      var ctrlY = Math.min(pt.y, otherPt.y) - 34;
+      tag.line.setAttribute("d",
+        "M " + pt.x + " " + pt.y + " Q " + ctrlX + " " + ctrlY + " " + otherPt.x + " " + otherPt.y);
+      tag.marker.setAttribute("cx", otherPt.x);
+      tag.marker.setAttribute("cy", otherPt.y);
+      tag.marker.setAttribute("stroke", barrelShade(hexToRgbArr(tag.color), otherPt.depth));
     });
   });
 }
