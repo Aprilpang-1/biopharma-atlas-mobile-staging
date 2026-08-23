@@ -1828,12 +1828,20 @@ var barrelPointerUpHandler = null;
 // instant stage 1 finishes - is an endless breathe loop between a dim
 // floor and that same target opacity, so the field stays alive as ambient
 // motion under the barrel instead of settling into a static drawing.
+// 2026-08-22: April tried a darker barrel-only backdrop vs. just boosting
+// the echo field itself to fix low contrast on white, and picked the
+// latter (option C) - keep the white background untouched everywhere,
+// push the lines themselves brighter/thicker instead. Opacity values below
+// are the original set x2.4 (kept under 1.0 on every layer), stroke width
+// bumped 1.3 -> 1.7 so the boost reads as ink strength, not just a color
+// shift.
 var BARREL_ECHO_LAYERS = [
-  { scale: 1.22, opacity: 0.28 },
-  { scale: 1.5, opacity: 0.18 },
-  { scale: 1.85, opacity: 0.1 },
-  { scale: 2.2, opacity: 0.05 }
+  { scale: 1.22, opacity: 0.67 },
+  { scale: 1.5, opacity: 0.43 },
+  { scale: 1.85, opacity: 0.24 },
+  { scale: 2.2, opacity: 0.12 }
 ];
+var BARREL_ECHO_STROKE_WIDTH = 1.7;
 var BARREL_ECHO_SAMPLES = 40;
 var barrelEchoEls = []; // [strandIdx] -> [layerIdx] -> <path>
 
@@ -1849,7 +1857,7 @@ function buildBarrelEchoField(areas) {
         d: "M0,0",
         fill: "none",
         stroke: area.color,
-        "stroke-width": 1.3,
+        "stroke-width": BARREL_ECHO_STROKE_WIDTH,
         opacity: reduceMotion ? layer.opacity : 0
       });
       if (!reduceMotion) {
