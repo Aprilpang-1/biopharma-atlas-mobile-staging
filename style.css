@@ -934,6 +934,38 @@ header h1 {
   color: #888;
 }
 
+/* 2026-08-22: the "shared across N areas" block shown at the top of a
+   shared station's detail panel (sharedAreasHtml, app.js) - answers April's
+   "how will people know what the pie-slice dot means" question by spelling
+   it out the moment the station is tapped. Reuses .drug-area-tag for the
+   pills themselves (same colored-pill treatment already used for example
+   drugs) so this doesn't introduce a second visual language. */
+.shared-areas-block {
+  margin: 0.5rem 0 0.75rem;
+}
+
+.shared-areas-label {
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: #888;
+  margin-bottom: 0.4rem;
+}
+
+.shared-areas-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+
+.shared-areas-hint {
+  font-size: 0.8rem;
+  color: #999;
+  font-style: italic;
+  margin: 0.5rem 0 0;
+}
+
 .proscons-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;

@@ -797,6 +797,27 @@ function drugListHtml(mod) {
   }).join("");
 }
 
+// 2026-08-22: April's question was "how will people know what the pie-slice
+// dot on the barrel means the first time they see it?" - the honest answer
+// is they can't, from the dot alone. This is where that gets spelled out:
+// the moment someone taps a shared station, its detail panel leads with a
+// labeled row of every area it belongs to (colored to match those areas'
+// own badges elsewhere), plus one line of plain-language explanation - so
+// the meaning is taught through the tap, not a legend nobody reads.
+function sharedAreasHtml(mod) {
+  if (mod.areas.length <= 1) return "";
+  var tags = mod.areas.map(function (aid) {
+    var a = state.data.areas.filter(function (x) { return x.id === aid; })[0];
+    if (!a) return "";
+    return "<span class=\"drug-area-tag\" style=\"background:" + esc(a.color) + "\">" + esc(a.name) + "</span>";
+  }).join("");
+  return "<div class=\"shared-areas-block\">" +
+    "<div class=\"shared-areas-label\">Shared across " + mod.areas.length + " areas</div>" +
+    "<div class=\"shared-areas-tags\">" + tags + "</div>" +
+    "<p class=\"shared-areas-hint\">This station appears in " + mod.areas.length + " different pipelines - tap any of its lines to jump there.</p>" +
+    "</div>";
+}
+
 function compareCardHtml(mod) {
   var prosItems = mod.pros.map(function (p) { return "<li>" + esc(p) + "</li>"; }).join("");
   var consItems = mod.cons.map(function (c) { return "<li>" + esc(c) + "</li>"; }).join("");
@@ -1845,6 +1866,43 @@ function buildWheelMap(app) {
   // attributes and hidden-station/selected classes the metro map already
   // uses, so applyFocusState's existing highlight/fade logic needs zero
   // changes to keep driving them here.
+  //
+  // 2026-08-22 (option A): shared (multi-area) stations get a pie-slice
+  // fill instead of one flat color - one wedge per area it belongs to, in
+  // that area's own color. Built as an SVG <pattern> per shared modality so
+  // the dot stays a single <circle> underneath (identical positioning,
+  // hover, selected-outline, and hidden-station toggling to every other
+  // station - only its `fill` attribute differs). April separately asked
+  // how a first-time viewer would know what the wedges mean - answer is
+  // they can't from the dot alone, so renderDetailPanel's sharedAreasHtml()
+  // spells it out in words the moment the station is tapped.
+  var barrelDefs = svgEl("defs", {});
+  svg.appendChild(barrelDefs);
+  function buildPieFillPattern(mod) {
+    var pid = "pie-" + mod.id;
+    var n = mod.areas.length;
+    var pattern = svgEl("pattern", {
+      id: pid, patternUnits: "objectBoundingBox", x: 0, y: 0, width: 1, height: 1,
+      viewBox: "0 0 32 32"
+    });
+    var pcx = 16, pcy = 16, pr = 23; // pr > half-diagonal of the 32x32 tile so wedges fully cover the circle's bbox regardless of clipping
+    for (var k = 0; k < n; k++) {
+      var aObj = state.data.areas.filter(function (a) { return a.id === mod.areas[k]; })[0];
+      var startDeg = -90 + k * (360 / n);
+      var endDeg = startDeg + 360 / n;
+      var sx = pcx + pr * Math.cos((startDeg * Math.PI) / 180);
+      var sy = pcy + pr * Math.sin((startDeg * Math.PI) / 180);
+      var ex = pcx + pr * Math.cos((endDeg * Math.PI) / 180);
+      var ey = pcy + pr * Math.sin((endDeg * Math.PI) / 180);
+      var largeArc = 360 / n > 180 ? 1 : 0;
+      var dAttr = "M" + pcx + "," + pcy + " L" + sx + "," + sy +
+        " A" + pr + "," + pr + " 0 " + largeArc + " 1 " + ex + "," + ey + " Z";
+      pattern.appendChild(svgEl("path", { d: dAttr, fill: aObj ? aObj.color : "#999" }));
+    }
+    barrelDefs.appendChild(pattern);
+    return pid;
+  }
+
   var stationsG = svgEl("g", { id: "barrel-stations" });
   mapContent.appendChild(stationsG);
   barrelStationEls = {};
@@ -1856,17 +1914,12 @@ function buildWheelMap(app) {
       // both loop ends, evenly by index - the barrel's analog of the flat
       // wheel's outward per-index radius spacing.
       var t = count > 0 ? 0.16 + (0.68 * (idx + 1)) / (count + 1) : 0.5;
-      // 2026-08-22: April tried a couple of ways to visually call out shared
-      // (multi-area) stations on the barrel - a special white/thick-stroke
-      // dot, then dashed lines out to the other strands - and asked to drop
-      // all of it. Every barrel station dot, shared or not, now renders
-      // identically (unlike the desktop metro's interchange-dot/pill system
-      // below in buildMap, which is untouched and still marks shared
-      // stations there).
+      var isShared = mod.areas.length > 1;
+      var dotFill = isShared ? "url(#" + buildPieFillPattern(mod) + ")" : area.color;
       var dot = svgEl("circle", {
-        cx: barrelCx, cy: BARREL_TOP_Y, r: 10,
+        cx: barrelCx, cy: BARREL_TOP_Y, r: isShared ? 11 : 10,
         class: "station-dot hidden-station",
-        fill: area.color,
+        fill: dotFill,
         stroke: "#111",
         "stroke-width": 1.5,
         "data-station": mod.id
@@ -3488,6 +3541,7 @@ function renderDetailPanel() {
       "<h3>" + esc(mod.name) + "</h3>" +
       "<button class=\"pin-btn" + (isPinned(mod.id) ? " pinned" : "") + "\" data-action=\"toggle-pin\" data-mod=\"" + esc(mod.id) + "\">" + pinLabel + "</button>" +
       "</div>" +
+      sharedAreasHtml(mod) +
       "<p>" + esc(mod.concept) + "</p>" +
       schematic +
       "<div class=\"layer3-buttons\">" +
