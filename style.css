@@ -668,40 +668,6 @@ header h1 {
   opacity: 0;
 }
 
-/* 2026-08-22: beta-barrel shared-station markers (buildWheelMap/
-   renderBarrelFrame, app.js) - a dashed line from a shared station's dot,
-   reaching all the way to a small marker dot sitting directly ON each
-   OTHER strand it belongs to (not a floating badge - April's revision of
-   the first "option D" round, so it reads as "this bridges these two
-   sheets" rather than "here's a tag"). Positions are recomputed every
-   frame (both the dot and the strand it's reaching for move as the barrel
-   rotates); these two classes only own static appearance + the
-   hidden-station fade, same pattern as .tone-dot/.pill-crossing above.
-   The marker's stroke color (that other area's color, depth-shaded) is set
-   directly in renderBarrelFrame, same as the dot itself would be. */
-.barrel-shared-line {
-  fill: none;
-  stroke: #888780;
-  stroke-width: 1.5;
-  stroke-dasharray: 4 3;
-  pointer-events: none;
-  transition: opacity 0.3s ease;
-}
-
-.barrel-shared-line.hidden-station {
-  opacity: 0;
-}
-
-.barrel-shared-marker {
-  stroke-width: 4;
-  pointer-events: none;
-  transition: opacity 0.3s ease;
-}
-
-.barrel-shared-marker.hidden-station {
-  opacity: 0;
-}
-
 .station-dot.hidden-station {
   opacity: 0;
   pointer-events: none;

@@ -1856,13 +1856,19 @@ function buildWheelMap(app) {
       // both loop ends, evenly by index - the barrel's analog of the flat
       // wheel's outward per-index radius spacing.
       var t = count > 0 ? 0.16 + (0.68 * (idx + 1)) / (count + 1) : 0.5;
-      var isInterchange = mod.areas.length > 1;
+      // 2026-08-22: April tried a couple of ways to visually call out shared
+      // (multi-area) stations on the barrel - a special white/thick-stroke
+      // dot, then dashed lines out to the other strands - and asked to drop
+      // all of it. Every barrel station dot, shared or not, now renders
+      // identically (unlike the desktop metro's interchange-dot/pill system
+      // below in buildMap, which is untouched and still marks shared
+      // stations there).
       var dot = svgEl("circle", {
-        cx: barrelCx, cy: BARREL_TOP_Y, r: isInterchange ? 13 : 10,
-        class: "station-dot hidden-station" + (isInterchange ? " interchange-dot" : ""),
-        fill: isInterchange ? "#fff" : area.color,
+        cx: barrelCx, cy: BARREL_TOP_Y, r: 10,
+        class: "station-dot hidden-station",
+        fill: area.color,
         stroke: "#111",
-        "stroke-width": isInterchange ? 4 : 1.5,
+        "stroke-width": 1.5,
         "data-station": mod.id
       });
       dot.addEventListener("click", function () {
@@ -1884,31 +1890,7 @@ function buildWheelMap(app) {
         return { el: label, lineIndex: i - midIndex };
       });
 
-      // 2026-08-22: April picked "option D" from the shared-station-marker
-      // preview - a dashed line from the station's dot reaching all the way
-      // across to a small marker dot sitting ON each OTHER strand it
-      // belongs to (mod.areas[0] is the primary area the main dot is drawn
-      // on), at the same height (t) as the station itself. Replaces the
-      // first "option D" round, which stopped the line at a floating badge
-      // instead of actually touching the other strand - April wanted it to
-      // read as "this bridges these two sheets", not "here's a tag". Built
-      // once here as a pooled set of elements per other-area, repositioned
-      // every frame in renderBarrelFrame alongside the dot itself, and
-      // shown/hidden in lockstep with the dot's own hidden-station state
-      // (read there, not recomputed here).
-      var sharedTags = mod.areas.slice(1).map(function (otherAreaId) {
-        var otherIdx = areas.map(function (a) { return a.id; }).indexOf(otherAreaId);
-        var otherArea = areas[otherIdx];
-        var line = svgEl("path", { class: "barrel-shared-line hidden-station", d: "M0 0" });
-        stationsG.appendChild(line);
-        var marker = svgEl("circle", {
-          r: 9, class: "barrel-shared-marker hidden-station", fill: "#fff"
-        });
-        stationsG.appendChild(marker);
-        return { line: line, marker: marker, otherIdx: otherIdx, color: otherArea ? otherArea.color : "#888" };
-      });
-
-      barrelStationEls[mod.id] = { dot: dot, labels: labelEls, sharedTags: sharedTags, areaIdx: areaIdx, t: t };
+      barrelStationEls[mod.id] = { dot: dot, labels: labelEls, areaIdx: areaIdx, t: t };
     });
   });
 
@@ -2052,36 +2034,12 @@ function renderBarrelFrame() {
     st.dot.setAttribute("cx", pt.x);
     st.dot.setAttribute("cy", pt.y);
     var dotSide = pt.x >= barrelCx ? 1 : -1;
-    var r = st.dot.classList.contains("interchange-dot") ? 13 : 10;
-    var labelX = pt.x + dotSide * (r + 8);
+    var labelX = pt.x + dotSide * 18;
     var anchor = dotSide > 0 ? "start" : "end";
     st.labels.forEach(function (item) {
       item.el.setAttribute("x", labelX);
       item.el.setAttribute("y", pt.y + item.lineIndex * LABEL_LINE_GAP + 5);
       item.el.setAttribute("text-anchor", anchor);
-    });
-
-    // A dashed line from the dot reaching all the way to a small marker on
-    // each OTHER strand the station belongs to, at the same height (t) as
-    // the station itself - April's approved "connects to the other sheet"
-    // design. Visibility mirrors the dot's own hidden-station state (set
-    // elsewhere, by applyFocusState) rather than being recomputed here, so
-    // it can never drift out of sync with whether the dot itself is
-    // actually showing.
-    var dotHidden = st.dot.classList.contains("hidden-station");
-    st.sharedTags.forEach(function (tag) {
-      tag.line.classList.toggle("hidden-station", dotHidden);
-      tag.marker.classList.toggle("hidden-station", dotHidden);
-      if (dotHidden) return;
-      var otherSp = barrelStrandParams[tag.otherIdx];
-      var otherPt = barrelStrandPoint(otherSp, st.t, rotation, barrelCx);
-      var ctrlX = (pt.x + otherPt.x) / 2;
-      var ctrlY = Math.min(pt.y, otherPt.y) - 34;
-      tag.line.setAttribute("d",
-        "M " + pt.x + " " + pt.y + " Q " + ctrlX + " " + ctrlY + " " + otherPt.x + " " + otherPt.y);
-      tag.marker.setAttribute("cx", otherPt.x);
-      tag.marker.setAttribute("cy", otherPt.y);
-      tag.marker.setAttribute("stroke", barrelShade(hexToRgbArr(tag.color), otherPt.depth));
     });
   });
 }
