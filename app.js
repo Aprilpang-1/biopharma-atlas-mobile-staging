@@ -947,15 +947,19 @@ function fitMapToContainer(app) {
       var headerBottom = headerEl.getBoundingClientRect().bottom;
       topSafe = Math.max(headerBottom - appRect.top, 0) + 32;
     }
-    var bottomSafe = 70;
-    if (toolbarEl) {
-      // #toolbar's own bounding box already collapses toward zero height
-      // when both its buttons are hidden (min-height:0, flex children
-      // display:none) - no separate "is anything actually visible" check
-      // needed, this naturally yields a small bottomSafe in that case.
-      var toolbarTop = toolbarEl.getBoundingClientRect().top;
-      bottomSafe = Math.max(appRect.bottom - toolbarTop, 0) + 24;
-    }
+    // 2026-08-22: April's "Google Maps feeling" ask - the map in Google
+    // Maps fills the ENTIRE space under the search bar edge-to-edge, with
+    // the floating controls sitting on top of it rather than the map
+    // stopping short to leave them dedicated room. #back-btn/#compare-btn
+    // already have the translucent blur + shadow treatment for exactly
+    // this (see the mobile #back-btn/#compare-btn rule, style.css) - they
+    // were just never actually asked to float OVER the barrel, because
+    // bottomSafe used to carve out clearance ending right at #toolbar's
+    // own top edge. Dropped in favor of a small fixed margin (just enough
+    // that content doesn't run flush into the physical screen edge/home-
+    // indicator area) so the barrel and echo field now extend all the way
+    // down, and #toolbar floats over whatever ends up underneath it.
+    var bottomSafe = 20;
     var usableH = Math.max(ch - topSafe - bottomSafe, 100);
     // Scale basis is the barrel's actual measured content box (see
     // BARREL_CONTENT_W/H above), not the full padded vbW/vbH canvas -
