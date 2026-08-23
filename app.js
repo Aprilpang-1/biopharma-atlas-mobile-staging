@@ -924,25 +924,36 @@ function fitMapToContainer(app) {
     // edge instead of guessing a pixel value makes this correct regardless
     // of device notch size or how many lines any wrapped text takes.
     //
-    // 2026-08-22: April moved the "PharmaWheel" title (the <header>
-    // element) down to float over the BOTTOM of the barrel instead of the
-    // top, so badges at the top of a strand stop getting covered by it -
-    // #toolbar (back/compare buttons) is the thing floating at top now.
-    // This reserves clearance on BOTH edges: topSafe from #toolbar's real
-    // bottom edge, bottomSafe from header's real top edge, so the barrel
-    // never renders under either floating pill.
-    var toolbarEl = document.getElementById("toolbar");
+    // 2026-08-22: header is now a solid, non-floating strip docked to the
+    // top of the screen (April: it should read as its own separate section
+    // of the page, not a translucent pill layered over the barrel) - so
+    // topSafe reserves clearance below it, same idea as before but a
+    // slightly bigger margin (32 vs the old 24) so the barrel starts with a
+    // bit of visible breathing room under the strip rather than butting
+    // right up against its divider line. #toolbar (back/compare) takes
+    // over the floating-pill treatment header used to have, now anchored
+    // low over the barrel instead of the top, so bottomSafe reserves
+    // clearance above IT instead. Net effect versus the previous
+    // arrangement: both reserved elements are short (one line of text up
+    // top, a row of small buttons down low), so the barrel doesn't lose
+    // meaningfully more room than it had before - it's just how that room
+    // is now split between the two edges that's changed.
     var headerEl = document.querySelector("header");
+    var toolbarEl = document.getElementById("toolbar");
     var appRect = app.getBoundingClientRect();
     var topSafe = 70;
-    if (toolbarEl) {
-      var toolbarBottom = toolbarEl.getBoundingClientRect().bottom;
-      topSafe = Math.max(toolbarBottom - appRect.top, 0) + 24;
+    if (headerEl) {
+      var headerBottom = headerEl.getBoundingClientRect().bottom;
+      topSafe = Math.max(headerBottom - appRect.top, 0) + 32;
     }
     var bottomSafe = 70;
-    if (headerEl) {
-      var headerTop = headerEl.getBoundingClientRect().top;
-      bottomSafe = Math.max(appRect.bottom - headerTop, 0) + 24;
+    if (toolbarEl) {
+      // #toolbar's own bounding box already collapses toward zero height
+      // when both its buttons are hidden (min-height:0, flex children
+      // display:none) - no separate "is anything actually visible" check
+      // needed, this naturally yields a small bottomSafe in that case.
+      var toolbarTop = toolbarEl.getBoundingClientRect().top;
+      bottomSafe = Math.max(appRect.bottom - toolbarTop, 0) + 24;
     }
     var usableH = Math.max(ch - topSafe - bottomSafe, 100);
     var wScale = Math.min(cw / vbW, usableH / vbH);
@@ -3314,7 +3325,7 @@ function backToOverview() {
   document.getElementById("back-btn").classList.add("hidden");
   document.getElementById("detail-panel").classList.add("hidden");
   syncSheetBackdrop(false);
-  document.getElementById("subtitle").textContent = "Tap an area to explore its modalities";
+  document.getElementById("subtitle").textContent = "Tap a line to explore";
 }
 
 function backToStationList() {
