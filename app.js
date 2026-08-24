@@ -1806,7 +1806,12 @@ function barrelStrandPoint(sp, t, rotationDeg, cx, radiusScale) {
   return {
     x: cx + r * Math.sin(ang),
     y: BARREL_TOP_Y + (BARREL_BOT_Y - BARREL_TOP_Y) * t,
-    depth: Math.cos(ang)
+    depth: Math.cos(ang),
+    // 2026-08-22: added for barrelShadeLit's specular highlight - the raw
+    // facing angle (degrees) each point sits at, same value `depth` is
+    // derived from (cos(ang)). Backward compatible: existing callers that
+    // only read x/y/depth are unaffected by this extra field.
+    angDeg: angDeg
   };
 }
 
@@ -1823,6 +1828,92 @@ function barrelShade(rgb, depth) {
     out = rgb.map(function (c) { return Math.round(c * (1 - 0.55 * -depth)); });
   }
   return "rgb(" + out[0] + "," + out[1] + "," + out[2] + ")";
+}
+
+// 2026-08-22: April's "still looks static, lacks real 3D feeling" -
+// barrelShade alone only gives a flat front/back tint (a single lighting
+// cue), no specular highlight, so a lit cylinder never reads as glossy/
+// rendered, just flatly colored. This adds a bright glint on top of that
+// same tint - strongest where a point's own facing angle (angDeg, from
+// barrelStrandPoint) is closest to BARREL_LIGHT_ANGLE_DEG (an upper-left
+// light source, a common product-shot angle), tightened into a narrow
+// streak via the BARREL_SPEC_POWER exponent rather than a broad diffuse
+// glow. Only applied front-facing (depth>0) - the back of the tube has no
+// glint. `pulseStrength` (0..1) is the breathing-pulse multiplier from
+// tickBarrelLightPulse below - 1 = full glint, 0 = none, letting the exact
+// same highlight fade in and out over time without any separate on/off
+// branch here.
+var BARREL_LIGHT_ANGLE_DEG = -35;
+var BARREL_SPEC_POWER = 10;
+var BARREL_SPEC_STRENGTH = 0.55;
+
+function barrelShadeLit(rgb, depth, angDeg, pulseStrength) {
+  var out;
+  if (depth >= 0) {
+    out = rgb.map(function (c) { return c + (255 - c) * (0.28 * depth); });
+  } else {
+    out = rgb.map(function (c) { return c * (1 - 0.55 * -depth); });
+  }
+  if (depth > 0 && pulseStrength > 0) {
+    var diffRad = ((angDeg - BARREL_LIGHT_ANGLE_DEG) * Math.PI) / 180;
+    var spec = Math.pow(Math.max(0, Math.cos(diffRad)), BARREL_SPEC_POWER) * depth;
+    var amount = spec * BARREL_SPEC_STRENGTH * pulseStrength;
+    if (amount > 0.001) {
+      out = out.map(function (c) { return c + (255 - c) * amount; });
+    }
+  }
+  return "rgb(" + Math.round(out[0]) + "," + Math.round(out[1]) + "," + Math.round(out[2]) + ")";
+}
+
+// 2026-08-23: April - "let the barrel lighting up and down" - a slow
+// breathing cycle on the specular glint above, so the barrel reads as lit
+// by a real (if simulated) light source that gently varies rather than a
+// static highlight painted on once. Sine-based for a smooth ease in/out at
+// both ends of the cycle (no linear "snap" at the top/bottom). Never fully
+// off (see BARREL_LIGHT_PULSE_FLOOR) - a strand at 0 specular still reads
+// as "flat", which would read as the highlight breaking rather than dimming.
+var BARREL_LIGHT_PULSE_PERIOD_SEC = 4.5;
+var BARREL_LIGHT_PULSE_FLOOR = 0.08;
+// Throttled well below 60fps: this loop re-runs the FULL renderBarrelFrame
+// (not a cheap recolor-only path) so every segment's fill picks up the new
+// pulseStrength, same as a drag frame does - ~12fps is smooth enough for a
+// slow ambient breathing effect and keeps the idle CPU cost low.
+var BARREL_LIGHT_PULSE_INTERVAL_MS = 80;
+var barrelLightPulseLastTick = 0;
+
+function tickBarrelLightPulse(ts) {
+  if (!isWheelMode() || !barrelStripesG) { barrelLightPulseRAF = null; return; }
+  if (barrelLightPulseStart === null) barrelLightPulseStart = ts;
+  if (ts - barrelLightPulseLastTick >= BARREL_LIGHT_PULSE_INTERVAL_MS) {
+    barrelLightPulseLastTick = ts;
+    var elapsedSec = (ts - barrelLightPulseStart) / 1000;
+    var phase = (elapsedSec % BARREL_LIGHT_PULSE_PERIOD_SEC) / BARREL_LIGHT_PULSE_PERIOD_SEC;
+    // Sine wave shifted so phase=0 starts at the midpoint rising, giving a
+    // smooth continuous breath rather than starting each cycle at a hard
+    // floor/peak edge.
+    var wave = (Math.sin(phase * Math.PI * 2 - Math.PI / 2) + 1) / 2;
+    barrelLightPulse = BARREL_LIGHT_PULSE_FLOOR + (1 - BARREL_LIGHT_PULSE_FLOOR) * wave;
+    renderBarrelFrame();
+  }
+  barrelLightPulseRAF = requestAnimationFrame(tickBarrelLightPulse);
+}
+
+// Started once per buildWheelMap (guarded against duplicate loops on
+// rebuild, same pattern as barrelRotateRAF elsewhere). Gated by
+// prefers-reduced-motion, same as the echo field's own sweep - when
+// reduced motion is on, the barrel just keeps the static full-strength
+// highlight (barrelLightPulse stays at its initial value of 1).
+function startBarrelLightPulseLoop() {
+  if (barrelLightPulseRAF) { cancelAnimationFrame(barrelLightPulseRAF); barrelLightPulseRAF = null; }
+  var reduceMotion = typeof window.matchMedia === "function" &&
+    window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  if (reduceMotion || typeof requestAnimationFrame !== "function") {
+    barrelLightPulse = 1;
+    return;
+  }
+  barrelLightPulseStart = null;
+  barrelLightPulseLastTick = 0;
+  barrelLightPulseRAF = requestAnimationFrame(tickBarrelLightPulse);
 }
 
 // Live element pools + rotation state for the currently-built barrel, so
@@ -1843,6 +1934,16 @@ var barrelRedrawScheduled = false;
 var barrelRotateRAF = null;
 var barrelPointerMoveHandler = null;
 var barrelPointerUpHandler = null;
+
+// 2026-08-23: April's "lighting up and down" ask - a slow breathing pulse
+// on top of the already-approved specular highlight (barrelShadeLit above),
+// so the barrel itself has ambient motion even while sitting idle (not
+// dragged), matching the echo field's own idle "alive" behavior. 1.0 = full
+// highlight strength, BARREL_LIGHT_PULSE_FLOOR = dimmest point of the
+// breathing cycle (never fully off, so the strands don't go flat-looking).
+var barrelLightPulse = 1;
+var barrelLightPulseRAF = null;
+var barrelLightPulseStart = null;
 
 // 2026-08-22: April's final direction on the "hi-tech background" ask -
 // drop the independent wave-line background entirely (it never felt like
@@ -1907,6 +2008,10 @@ var BARREL_ECHO_T_MAX = 1.5;
 // pulse rather than a jittery loop.
 var BARREL_ECHO_SWEEP_SEC = 5;
 var barrelEchoEls = []; // [strandIdx] -> [layerIdx] -> <path>
+// 2026-08-23: guards against redundant `d`-attribute rewrites - see
+// updateBarrelEchoPaths below. Reset to null on every buildWheelMap so a
+// fresh build always draws at least once.
+var barrelEchoLastRotation = null;
 
 function buildBarrelEchoField(areas) {
   var g = svgEl("g", { id: "barrel-echo-field", "pointer-events": "none" });
@@ -1958,6 +2063,12 @@ function buildWheelMap(app) {
   barrelAreas = areas;
   barrelStrandParams = buildBarrelStrandParams(areas);
   barrelCx = BARREL_W / 2;
+  // Fresh echo <path> elements are about to be built below (default
+  // d="M0,0") - reset the last-rotation guard so the very first
+  // renderBarrelFrame() call after this rebuild always populates them,
+  // even if the numeric rotation happens to match whatever it was before
+  // the rebuild.
+  barrelEchoLastRotation = null;
 
   // MOBILE_LAYOUT.viewBox is read all over this file (fitMapToContainer,
   // fullViewBoxArray) - mutating this one property (const only locks the
@@ -1970,6 +2081,27 @@ function buildWheelMap(app) {
   var svg = svgEl("svg", { id: "subway-map", viewBox: MOBILE_LAYOUT.viewBox });
   var mapContent = svgEl("g", { id: "map-content" });
   svg.appendChild(mapContent);
+
+  // 2026-08-23: grounding shadow - part of the same "why does it look
+  // static/flat" fix as barrelShadeLit's specular highlight above. A
+  // highlight alone still floats; a soft dark ellipse under the barrel's
+  // own footprint is what reads as "resting on a surface" and sells the 3D
+  // feel. Appended FIRST (before rimsG/stripesG/etc below) so it paints
+  // behind every strand/rim/badge regardless of depth-sort re-ordering
+  // elsewhere in renderBarrelFrame.
+  var shadowDefs = svgEl("defs", {});
+  svg.appendChild(shadowDefs);
+  var shadowGrad = svgEl("radialGradient", { id: "barrel-shadow-grad", cx: "50%", cy: "50%", r: "50%" });
+  shadowGrad.appendChild(svgEl("stop", { offset: "0%", "stop-color": "#000", "stop-opacity": "0.32" }));
+  shadowGrad.appendChild(svgEl("stop", { offset: "100%", "stop-color": "#000", "stop-opacity": "0" }));
+  shadowDefs.appendChild(shadowGrad);
+  var shadowEllipse = svgEl("ellipse", {
+    id: "barrel-ground-shadow",
+    cx: barrelCx, cy: BARREL_BOT_Y + 56,
+    rx: BARREL_RADIUS * 1.35, ry: BARREL_RIM_RY * 0.9,
+    fill: "url(#barrel-shadow-grad)", "pointer-events": "none"
+  });
+  mapContent.appendChild(shadowEllipse);
 
   // 2026-08-22: April's "hi-tech feel" ask, final form - an echo field
   // built from each strand's own curve (see buildBarrelEchoField above).
@@ -2175,6 +2307,7 @@ function buildWheelMap(app) {
 
   setupBarrelDrag(svg);
   renderBarrelFrame();
+  startBarrelLightPulseLoop();
 }
 
 function drawBarrelLoop(pathEl, p0, sign, dirx, flare, loopLen, rgb, colored) {
@@ -2213,9 +2346,10 @@ function renderBarrelFrame() {
       var t1 = (s + 1) / BARREL_SEGMENTS;
       var pt = barrelStrandPoint(sp, t1, rotation, barrelCx);
       var avgDepth = (prevPt.depth + pt.depth) / 2;
+      var avgAngDeg = (prevPt.angDeg + pt.angDeg) / 2;
       var w0 = Math.max(BARREL_MIN_W, BARREL_MAX_W * sp.radius_mult * Math.abs(prevPt.depth));
       var w1 = Math.max(BARREL_MIN_W, BARREL_MAX_W * sp.radius_mult * Math.abs(pt.depth));
-      var col = colored ? barrelShade(rgb, avgDepth) : (avgDepth >= 0 ? BARREL_GRAY_FRONT : BARREL_GRAY_BACK);
+      var col = colored ? barrelShadeLit(rgb, avgDepth, avgAngDeg, barrelLightPulse) : (avgDepth >= 0 ? BARREL_GRAY_FRONT : BARREL_GRAY_BACK);
       var poly = barrelSegEls[i][s];
       poly.setAttribute("points",
         (prevPt.x - w0 / 2) + "," + prevPt.y + " " +
@@ -2239,9 +2373,8 @@ function renderBarrelFrame() {
   // Echo field: retrace each strand's curve at a few larger radii, using
   // this SAME rotation value - this is what keeps it turning together with
   // the barrel on drag. Factored into updateBarrelEchoPaths() (below) so
-  // the perpetual idle-drift loop can reuse the exact same per-path
-  // building logic with a different (echo-only) rotation value, rather
-  // than duplicating it.
+  // its own separate call sites (see that function) share the exact same
+  // per-path building logic rather than duplicating it.
   updateBarrelEchoPaths(rotation);
 
   // Painter's algorithm: re-appending an existing node moves it (doesn't
@@ -2302,8 +2435,27 @@ function renderBarrelFrame() {
 // so each echo curve runs well past where the real strand's own body
 // starts/ends - see the T_MIN/T_MAX comment above for why extending t is
 // enough on its own (no separate extrapolation logic needed).
+//
+// 2026-08-23 fix: renderBarrelFrame() (and therefore this function) is now
+// also called continuously by the light-pulse breathing loop (~12fps,
+// forever, even at rest - see tickBarrelLightPulse) as well as on every
+// drag frame. Before this guard, that meant all 40 echo <path> elements
+// had their `d` attribute rewritten with the IDENTICAL string 12+ times a
+// second, nonstop, whether or not the barrel had actually rotated -
+// pointless DOM churn on elements that also carry a running SMIL <animate>
+// on opacity. Continuously touching an animated element's attributes like
+// that is exactly the kind of thing that makes SMIL timelines stutter or
+// appear to reset in some browsers (this is the most likely explanation
+// for April's "echo field disappears when I rotate" report - the churn
+// gets much heavier during an actual drag, on top of the already-constant
+// idle churn from the pulse loop). Skipping the rewrite whenever rotation
+// hasn't actually changed removes that churn entirely at rest, and keeps
+// updates flowing normally during real drags (where rotation genuinely
+// changes every frame).
 function updateBarrelEchoPaths(rotationForEcho) {
   if (!barrelStrandParams || !barrelEchoEls.length) return;
+  if (rotationForEcho === barrelEchoLastRotation) return;
+  barrelEchoLastRotation = rotationForEcho;
   var tSpan = BARREL_ECHO_T_MAX - BARREL_ECHO_T_MIN;
   barrelAreas.forEach(function (area, i) {
     var sp = barrelStrandParams[i];
