@@ -605,6 +605,14 @@ header h1 {
   border: none;
   background: none;
   cursor: pointer;
+  position: relative; /* anchors the .hint-pulse ring below */
+}
+
+/* 2026-08-24: first-visit legend hint ("option B") - hidden by default,
+   same convention as #legend-toggle/#map-legend above (real styling lives
+   in the mobile media query, since the FAB itself only exists there). */
+#legend-hint-tooltip {
+  display: none;
 }
 
 .legend-item {
@@ -1451,6 +1459,75 @@ header h1 {
 
   #legend-toggle:active {
     transform: scale(0.94);
+  }
+
+  /* 2026-08-24: first-visit legend hint ("option B" of the mockups shown -
+     see wireLegendFirstVisitHint, app.js). A soft ring pulses outward from
+     the FAB a few times, with a small tooltip bubble pointing at it -
+     entirely passive, the user still has to tap the FAB themselves to see
+     the actual legend. Both pieces are only ever added/shown once, on a
+     visitor's first-ever page load (tracked in localStorage), and are
+     dismissed the moment the user taps the FAB or after a generous
+     timeout - see the JS for exact timing. */
+  #legend-toggle.hint-pulse::after {
+    content: "";
+    position: absolute;
+    inset: -10px;
+    border-radius: 50%;
+    border: 2px solid #457B9D;
+    opacity: 0;
+    animation: legendHintPulse 1.8s ease-out infinite;
+  }
+
+  @keyframes legendHintPulse {
+    0% { transform: scale(0.8); opacity: 0.55; }
+    70% { transform: scale(1.35); opacity: 0; }
+    100% { transform: scale(1.35); opacity: 0; }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    #legend-toggle.hint-pulse::after {
+      animation: none;
+    }
+  }
+
+  #legend-hint-tooltip {
+    display: block;
+    position: fixed;
+    right: calc(1rem + 48px + 0.6rem);
+    bottom: calc(1rem + env(safe-area-inset-bottom, 0px) + 10px);
+    background: #23283a;
+    color: #fff;
+    padding: 0.5rem 0.75rem;
+    border-radius: 10px;
+    font-size: 0.78rem;
+    white-space: nowrap;
+    box-shadow: 0 4px 14px rgba(0, 0, 0, 0.22);
+    z-index: 46;
+    opacity: 0;
+    transform: translateY(4px);
+    transition: opacity 0.25s ease, transform 0.25s ease;
+    pointer-events: none;
+  }
+
+  #legend-hint-tooltip.visible {
+    opacity: 1;
+    transform: translateY(0);
+  }
+
+  #legend-hint-tooltip::after {
+    content: "";
+    position: absolute;
+    right: -6px;
+    top: 50%;
+    transform: translateY(-50%);
+    border-width: 6px 0 6px 6px;
+    border-style: solid;
+    border-color: transparent transparent transparent #23283a;
+  }
+
+  body.sheet-open #legend-hint-tooltip {
+    opacity: 0;
   }
 
   /* reflects the popover's own open/closed state onto the FAB, without

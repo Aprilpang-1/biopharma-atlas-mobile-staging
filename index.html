@@ -51,6 +51,14 @@
       <polyline points="3 16 12 21 21 16"></polyline>
     </svg>
   </button>
+  <!-- 2026-08-24: April's friend couldn't guess what the line badges
+       (ON, IM, RD...) stood for - "option B" of three hint mockups shown:
+       a gentle pulsing ring on the existing legend FAB (class toggled in
+       app.js) plus this tooltip bubble, shown ONLY on a visitor's first
+       ever visit (see wireLegendFirstVisitHint/localStorage in app.js),
+       left for the user to tap the FAB themselves rather than the legend
+       popping open on its own. -->
+  <div id="legend-hint-tooltip" role="status">What do these mean?</div>
 
   <div id="sheet-backdrop" class="hidden"></div>
   <div id="detail-panel" class="hidden">

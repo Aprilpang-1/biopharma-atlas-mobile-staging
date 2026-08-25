@@ -4003,6 +4003,7 @@ function wireToolbar() {
   document.getElementById("compare-btn").addEventListener("click", showCompareView);
   wireDetailSheet();
   wireLegendToggle();
+  wireLegendFirstVisitHint();
 }
 
 // 2026-08-12 (2026-08-13: switched from toggling the in-SVG legend-box to
@@ -4030,6 +4031,56 @@ function wireLegendToggle() {
       panel.classList.remove("open");
     }
   });
+}
+
+// 2026-08-24: April's friend found the line badges (ON, IM, RD...) hard to
+// guess without an explanation. Of three hint mockups shown, "option B"
+// was chosen: a gentle pulsing ring + tooltip on the existing legend FAB,
+// shown ONLY on a visitor's first-ever visit (never again on that
+// device), left for the user to tap the FAB themselves - the legend
+// itself never pops open on its own. See #legend-toggle.hint-pulse and
+// #legend-hint-tooltip in style.css for the actual ring/bubble styling.
+var LEGEND_HINT_STORAGE_KEY = "pw_seen_legend_hint";
+var LEGEND_HINT_TOOLTIP_DELAY_MS = 700; // lets the page's own load-in motion (search bar, echo sweep) settle first
+var LEGEND_HINT_TIMEOUT_MS = 9000; // dismiss on its own if the user never taps the FAB
+
+function hasSeenLegendHint() {
+  try {
+    return localStorage.getItem(LEGEND_HINT_STORAGE_KEY) === "1";
+  } catch (e) {
+    // storage unavailable (private browsing, disabled, etc.) - fail toward
+    // NOT nagging the user every single load rather than showing the hint
+    // forever.
+    return true;
+  }
+}
+
+function markLegendHintSeen() {
+  try { localStorage.setItem(LEGEND_HINT_STORAGE_KEY, "1"); } catch (e) { /* ignore */ }
+}
+
+function wireLegendFirstVisitHint() {
+  var btn = document.getElementById("legend-toggle");
+  var tooltip = document.getElementById("legend-hint-tooltip");
+  if (!btn || !tooltip || hasSeenLegendHint()) return;
+
+  var showTimer = null;
+  var timeoutTimer = null;
+
+  function dismiss() {
+    btn.classList.remove("hint-pulse");
+    tooltip.classList.remove("visible");
+    if (showTimer) clearTimeout(showTimer);
+    if (timeoutTimer) clearTimeout(timeoutTimer);
+    markLegendHintSeen();
+  }
+
+  btn.classList.add("hint-pulse");
+  showTimer = setTimeout(function () { tooltip.classList.add("visible"); }, LEGEND_HINT_TOOLTIP_DELAY_MS);
+  // Tapping the FAB is the natural "got it" signal - the user is about to
+  // see the real legend anyway, so the hint has done its job.
+  btn.addEventListener("click", dismiss, { once: true });
+  timeoutTimer = setTimeout(dismiss, LEGEND_HINT_TIMEOUT_MS);
 }
 
 // 2026-08-22: April's "Google Maps search bar" ask - the mobile header's
